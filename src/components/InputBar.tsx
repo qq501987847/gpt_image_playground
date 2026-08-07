@@ -306,6 +306,7 @@ export default function InputBar() {
   }, [clearFavoriteCollectionSelection, defaultFavoriteCollectionId, favoriteCollections, selectedFavoriteCollectionIds, setConfirmDialog, showToast, tasks])
 
   const maskDraft = useStore((s) => s.maskDraft)
+  const clearMaskDraft = useStore((s) => s.clearMaskDraft)
   const moveInputImage = useStore((s) => s.moveInputImage)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -459,6 +460,7 @@ export default function InputBar() {
   }, [setPrompt])
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
+  const isGeminiProvider = activeProvider === 'gemini'
   const agentAutoImageCount = appMode === 'agent'
   const moderationDisabled = isFalProvider
   const transparentOutputAvailable = appMode === 'gallery'
@@ -639,6 +641,10 @@ export default function InputBar() {
       setParams(patch)
     }
   }, [inputImages.length, params, effectiveSettings, setParams])
+
+  useEffect(() => {
+    if (isGeminiProvider && maskDraft) clearMaskDraft()
+  }, [isGeminiProvider, maskDraft, clearMaskDraft])
 
   useEffect(() => () => {
     if (imageHintTimerRef.current != null) {
@@ -1516,6 +1522,7 @@ export default function InputBar() {
       activeProfile={activeProfile}
       isFalProvider={isFalProvider}
       isFalTextToImage={isFalTextToImage}
+      isGeminiProvider={isGeminiProvider}
       displaySize={displaySize}
       qualityOptions={qualityOptions}
       selectClass={selectClass}

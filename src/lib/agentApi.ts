@@ -601,8 +601,9 @@ export async function callAgentResponsesApi(opts: {
   onImagePartialImage?: (event: { toolCallId: string; image: string; partialImageIndex?: number; outputIndex?: number }) => void | Promise<void>
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
   onImageToolFailed?: (event: AgentApiImageToolFailure) => void | Promise<void>
+  allowImageTools?: boolean
 }): Promise<AgentApiResult> {
-  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed } = opts
+  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed, allowImageTools = true } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -617,7 +618,7 @@ export async function callAgentResponsesApi(opts: {
       model: profile.model || settings.model,
       instructions: createAgentInstructions(settings, (imageProfile ?? profile).codexCli ? params.size : undefined),
       input,
-      tools: createAgentTools(params, profile, settings, maskDataUrl),
+      ...(allowImageTools ? { tools: createAgentTools(params, profile, settings, maskDataUrl) } : {}),
     }
     if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
     if (profile.streamImages) {

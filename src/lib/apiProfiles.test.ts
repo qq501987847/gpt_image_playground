@@ -5,6 +5,7 @@ import {
   DEFAULT_IMAGES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
   DEFAULT_SETTINGS,
+  createDefaultGeminiProfile,
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
   getActiveApiProfile,
@@ -38,6 +39,19 @@ describe('validateApiProfile', () => {
       apiKey: 'test-key',
       apiProxy: true,
     }))).toBe('缺少 API URL')
+  })
+
+  it('keeps Gemini profiles native and preserves their Key binding id', () => {
+    const profile = createDefaultGeminiProfile({ keyId: 'key-gemini', apiKey: 'secret' })
+    const normalized = normalizeSettings({ profiles: [profile], activeProfileId: profile.id })
+
+    expect(normalized.profiles[0]).toMatchObject({
+      provider: 'gemini',
+      apiMode: 'images',
+      keyId: 'key-gemini',
+      model: 'gemini-3.1-flash-image-preview',
+    })
+    expect(validateApiProfile(normalized.profiles[0])).toBeNull()
   })
 })
 
@@ -679,9 +693,11 @@ describe('custom providers', () => {
     const openaiProfile = createDefaultOpenAIProfile({ apiMode: 'responses', streamImages: true })
 
     const falProfile = switchApiProfileProvider(openaiProfile, 'fal')
+    const geminiProfile = switchApiProfileProvider(openaiProfile, 'gemini')
     const customProfile = switchApiProfileProvider(openaiProfile, provider.id, provider)
 
     expect(falProfile).toMatchObject({ provider: 'fal', apiMode: 'images', streamImages: false })
+    expect(geminiProfile).toMatchObject({ provider: 'gemini', model: 'gemini-3.1-flash-image-preview', apiMode: 'images', streamImages: false })
     expect(customProfile).toMatchObject({ provider: provider.id, apiMode: 'images', streamImages: false })
   })
 

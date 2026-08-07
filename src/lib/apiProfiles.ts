@@ -32,10 +32,11 @@ export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-image-preview'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
 
-const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'fal'])
+const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'fal', 'gemini'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
   generationPath: 'images/generations',
   editPath: 'images/edits',
@@ -351,6 +352,25 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
   }
 }
 
+export function createDefaultGeminiProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
+  return {
+    id: `gemini-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name: 'Gemini',
+    provider: 'gemini',
+    baseUrl: DEFAULT_BASE_URL,
+    apiKey: '',
+    keyId: null,
+    model: DEFAULT_GEMINI_MODEL,
+    timeout: DEFAULT_API_TIMEOUT,
+    apiMode: 'images',
+    codexCli: false,
+    apiProxy: false,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    ...overrides,
+  }
+}
+
 export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvider, customProvider?: CustomProviderDefinition): ApiProfile {
   const providerDrafts = {
     ...profile.providerDrafts,
@@ -379,6 +399,23 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
       codexCli: false,
       apiProxy: false,
       responseFormatB64Json: savedDraft?.responseFormatB64Json,
+      streamImages: false,
+      streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
+      providerDrafts,
+    }
+  }
+
+  if (provider === 'gemini') {
+    return {
+      ...profile,
+      provider,
+      baseUrl: savedDraft?.baseUrl ?? profile.baseUrl ?? DEFAULT_BASE_URL,
+      model: savedDraft?.model ?? DEFAULT_GEMINI_MODEL,
+      apiMode: 'images',
+      reasoningEffort: undefined,
+      codexCli: false,
+      apiProxy: false,
+      responseFormatB64Json: undefined,
       streamImages: false,
       streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
       providerDrafts,
@@ -463,10 +500,12 @@ function normalizeProviderDrafts(input: unknown, customProviderIds: Set<string>)
 export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfile>, customProviderIds = new Set<string>()): ApiProfile {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const rawProvider = typeof record.provider === 'string' ? record.provider : ''
-  const provider: ApiProvider = rawProvider === 'fal' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
+  const provider: ApiProvider = rawProvider === 'fal' || rawProvider === 'gemini' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
   const apiMode: ApiMode = provider === 'openai' && record.apiMode === 'responses' ? 'responses' : 'images'
   const defaults = provider === 'fal'
     ? createDefaultFalProfile(fallback)
+    : provider === 'gemini'
+      ? createDefaultGeminiProfile(fallback)
     : createDefaultOpenAIProfile({ ...fallback, apiMode })
   const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
   const streamImages = provider === 'openai'
@@ -482,13 +521,14 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
     model: typeof record.model === 'string' && record.model.trim() ? record.model : defaults.model,
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,
-    apiMode,
+    apiMode: provider === 'gemini' ? 'images' : apiMode,
     reasoningEffort: normalizeReasoningEffort(record.reasoningEffort, defaults.reasoningEffort),
     codexCli: Boolean(record.codexCli),
     apiProxy: typeof record.apiProxy === 'boolean' ? record.apiProxy : defaults.apiProxy,
     responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
     streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
+    keyId: typeof record.keyId === 'string' ? record.keyId : null,
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds),
   }
 }
@@ -593,6 +633,7 @@ export function getCustomProviderDefinition(settings: Partial<AppSettings> | unk
 export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, provider: ApiProvider): string {
   void settings
   if (provider === 'openai') return 'OpenAI'
+  if (provider === 'gemini') return 'Gemini 原生'
   return 'OpenAI'
 }
 

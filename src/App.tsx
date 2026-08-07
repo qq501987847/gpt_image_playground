@@ -18,8 +18,10 @@ import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
+import { hydrateSub2ApiProfiles, initializeSub2ApiSession, useSub2ApiSession } from './lib/sub2apiSession'
 
 export default function App() {
+  const sub2api = useSub2ApiSession()
   const setSettings = useStore((s) => s.setSettings)
   const appMode = useStore((s) => s.appMode)
   const filterFavorite = useStore((s) => s.filterFavorite)
@@ -51,6 +53,12 @@ export default function App() {
     clearAppliedUrlSettings()
 
     initStore()
+    void initializeSub2ApiSession().then(async (session) => {
+      if (session.status !== 'ready') return
+      const state = useStore.getState()
+      const profiles = await hydrateSub2ApiProfiles(state.settings.profiles)
+      state.setSettings({ ...state.settings, profiles })
+    })
   }, [setSettings])
 
   useEffect(() => {
@@ -63,6 +71,14 @@ export default function App() {
     document.addEventListener('dragstart', preventPageImageDrag)
     return () => document.removeEventListener('dragstart', preventPageImageDrag)
   }, [])
+
+  if (sub2api.status === 'invalid') {
+    return <main className="flex min-h-screen items-center justify-center p-6 text-center text-gray-700 dark:text-gray-200">入口无效</main>
+  }
+
+  if (sub2api.status === 'error') {
+    return <main className="flex min-h-screen items-center justify-center p-6 text-center text-red-600">{sub2api.error || 'Sub2API 连接失败'}</main>
+  }
 
   return (
     <>

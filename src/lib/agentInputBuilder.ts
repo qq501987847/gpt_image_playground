@@ -27,6 +27,7 @@ interface BuildAgentContinuationInputOptions {
   toolCallsUsed: number
   maxToolCalls: number
   loadImage: LoadImage
+  continuationOnly?: boolean
 }
 
 async function createUserInputItem(
@@ -181,13 +182,17 @@ export async function buildAgentContinuationInput(options: BuildAgentContinuatio
     .filter((ref): ref is string => Boolean(ref))
   const lines = ['[System] The app has saved your generated outputs and is continuing the same Agent turn.']
   if (newImageRefs.length > 0) {
-    lines.push(`The following image ref ids are now available for you to reference in subsequent image_generation prompts: ${newImageRefs.join(', ')}`)
+    lines.push(options.continuationOnly
+      ? `These saved image refs are available as context for the written reply: ${newImageRefs.join(', ')}`
+      : `The following image ref ids are now available for you to reference in subsequent image_generation prompts: ${newImageRefs.join(', ')}`)
   }
-  lines.push(
-    'Continue generating. Do NOT repeat what you already said in earlier responses.',
-    'If you still need another round after this (e.g. more dependent images), call continue_generation.',
-    `Tool-call budget: ${options.toolCallsUsed}/${options.maxToolCalls} used.`,
-  )
+  lines.push(options.continuationOnly
+    ? 'Continue the written reply using the saved tool results. Do not generate or request any new images.'
+    : 'Continue generating. Do NOT repeat what you already said in earlier responses.')
+  if (!options.continuationOnly) {
+    lines.push('If you still need another round after this (e.g. more dependent images), call continue_generation.')
+  }
+  lines.push(`Tool-call budget: ${options.toolCallsUsed}/${options.maxToolCalls} used.`)
   input.push({
     role: 'user',
     content: [{ type: 'input_text', text: lines.join('\n') }],

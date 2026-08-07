@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
+import { createDefaultFalProfile, createDefaultGeminiProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 import { getOutputImageLimitForSettings, normalizeParamsForSettings } from './paramCompatibility'
 
 describe('parameter compatibility', () => {
@@ -61,5 +61,25 @@ describe('parameter compatibility', () => {
 
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '2048x2048' }, settings).size).toBe('1024x1024')
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: 'auto' }, settings).size).toBe('auto')
+  })
+
+  it('normalizes OpenAI-only parameters out of Gemini task state', () => {
+    const profile = createDefaultGeminiProfile({ apiKey: 'gemini-key' })
+    const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
+
+    expect(normalizeParamsForSettings({
+      ...DEFAULT_PARAMS,
+      n: 4,
+      quality: 'high',
+      moderation: 'low',
+      output_compression: 80,
+      transparent_output: true,
+    }, settings)).toMatchObject({
+      n: 1,
+      quality: DEFAULT_PARAMS.quality,
+      moderation: DEFAULT_PARAMS.moderation,
+      output_compression: DEFAULT_PARAMS.output_compression,
+      transparent_output: false,
+    })
   })
 })

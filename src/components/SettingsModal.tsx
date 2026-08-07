@@ -45,6 +45,8 @@ import AgentSettingsTab from './settings/AgentSettingsTab'
 import CustomProviderModal from './settings/CustomProviderModal'
 import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/ProfileImportUrlModal'
 import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/ZipDownloadRouteModal'
+import Sub2ApiProfileFields from './settings/Sub2ApiProfileFields'
+import { useSub2ApiSession } from '../lib/sub2apiSession'
 
 function newId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
@@ -137,6 +139,7 @@ function isProfileApiProxyEligible(settings: AppSettings, profile: ApiProfile) {
 }
 
 export default function SettingsModal() {
+  const sub2api = useSub2ApiSession()
   const showSettings = useStore((s) => s.showSettings)
   const settingsTabRequest = useStore((s) => s.settingsTabRequest)
   const setShowSettings = useStore((s) => s.setShowSettings)
@@ -215,6 +218,7 @@ export default function SettingsModal() {
 
   const unorderedProviderOptions = [
     { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
+    { label: 'Gemini 原生', value: 'gemini', draggable: true },
   ]
 
   const providerOptions = [
@@ -869,8 +873,8 @@ export default function SettingsModal() {
 
   const handleProviderTypeChange = (value: string | number) => {
     if (defaultConfigOnly) return
-    if (value !== 'openai') return
-    updateActiveProfile(switchApiProfileProvider(activeProfile, 'openai'), true)
+    if (value !== 'openai' && value !== 'gemini') return
+    updateActiveProfile(switchApiProfileProvider(activeProfile, value), true)
   }
 
   const closeCustomProviderModal = () => {
@@ -1362,7 +1366,7 @@ export default function SettingsModal() {
               </div>
 
               {/* 3. API URL */}
-              {activeProviderUsesApiUrl && (
+              {sub2api.status !== 'ready' && activeProviderUsesApiUrl && (
                 <label className="block">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="block text-sm text-gray-600 dark:text-gray-300">API URL</span>
@@ -1389,7 +1393,7 @@ export default function SettingsModal() {
               )}
 
               {/* 4. API 代理（紧跟 URL） */}
-              {apiProxyAvailable && activeProviderIsOpenAICompatible && !activeCustomProviderAsync && (
+              {sub2api.status !== 'ready' && apiProxyAvailable && activeProviderIsOpenAICompatible && !activeCustomProviderAsync && (
                 <div className="block">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="block text-sm text-gray-600 dark:text-gray-300">API 代理</span>
@@ -1414,6 +1418,9 @@ export default function SettingsModal() {
               )}
 
               {/* 5. API Key */}
+              {sub2api.status === 'ready' ? (
+                <Sub2ApiProfileFields profile={activeProfile} onChange={(profile) => updateActiveProfile(profile, true)} />
+              ) : (
               <div className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
                 <div className="relative">
@@ -1450,6 +1457,7 @@ export default function SettingsModal() {
                   支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
                 </div>
               </div>
+              )}
 
               {/* 6. API 接口（Images/Responses） */}
               {activeProfile.provider === 'openai' && (
@@ -1478,6 +1486,7 @@ export default function SettingsModal() {
               )}
 
               {/* 7. 模型 ID（紧跟接口选择） */}
+              {sub2api.status !== 'ready' && (
               <label className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">
                   模型 ID
@@ -1505,6 +1514,7 @@ export default function SettingsModal() {
                   )}
                 </div>
               </label>
+              )}
 
               {(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' && activeProfile.provider === 'openai' && (
                 <div className="block">

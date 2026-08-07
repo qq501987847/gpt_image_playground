@@ -35,6 +35,14 @@ export function normalizeParamsForSettings(
     nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
+  if (activeProfile.provider === 'gemini') {
+    nextParams.n = 1
+    nextParams.transparent_output = false
+    nextParams.output_compression = DEFAULT_PARAMS.output_compression
+    nextParams.quality = DEFAULT_PARAMS.quality
+    nextParams.moderation = DEFAULT_PARAMS.moderation
+  }
+
   if (nextParams.output_format === 'png') {
     nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }

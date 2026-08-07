@@ -15,7 +15,7 @@ export const ZIP_DOWNLOAD_ROUTE_VALUES = [
 ] as const
 export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
-export type BuiltInApiProvider = 'openai' | 'fal'
+export type BuiltInApiProvider = 'openai' | 'fal' | 'gemini'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -83,6 +83,7 @@ export interface ApiProfile {
   responseFormatB64Json?: boolean
   streamImages?: boolean
   streamPartialImages?: number
+  keyId?: string | null
   providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'reasoningEffort' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages'>>>>
 }
 
@@ -128,6 +129,8 @@ export interface TaskParams {
   moderation: 'auto' | 'low'
   n: number
   transparent_output: boolean
+  geminiAspectRatio?: string
+  geminiImageSize?: '1K' | '2K' | '4K' | 'auto'
 }
 
 export const DEFAULT_PARAMS: TaskParams = {
@@ -138,6 +141,8 @@ export const DEFAULT_PARAMS: TaskParams = {
   moderation: 'auto',
   n: 1,
   transparent_output: false,
+  geminiAspectRatio: 'auto',
+  geminiImageSize: 'auto',
 }
 
 // ===== 输入图片（UI 层面） =====
@@ -257,7 +262,7 @@ export interface FavoriteCollection {
 // ===== Agent 模式 =====
 
 export type AgentMessageRole = 'user' | 'assistant'
-export type AgentRoundStatus = 'running' | 'done' | 'error'
+export type AgentRoundStatus = 'running' | 'done' | 'partial' | 'error'
 
 export interface AgentMessage {
   id: string

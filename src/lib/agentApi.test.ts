@@ -85,6 +85,25 @@ describe('callAgentResponsesApi', () => {
     })
   })
 
+  it('omits every image tool for continuation-only replies', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'continued-response',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'continued' }] }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', apiMode: 'responses' })
+
+    await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'continue' }] }],
+      allowImageTools: false,
+    })
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body).not.toHaveProperty('tools')
+  })
+
   it('reports failed image output item without aborting the ongoing stream', async () => {
     const streamBody = [
       'data: {"type":"response.output_item.added","item":{"id":"ig_fail","type":"image_generation_call","status":"in_progress"},"output_index":0}',

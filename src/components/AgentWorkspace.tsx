@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AgentMessage, AgentRound, TaskRecord } from '../types'
-import { editOutputs, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, reuseConfig, useStore } from '../store'
+import { continueAgentResponse, editOutputs, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, reuseConfig, useStore } from '../store'
 import { getActiveAgentRounds, getAgentBranchLeafId, getConversationSearchText, getAgentRoundTaskIds, getAgentSiblingRounds } from '../lib/agentConversationState'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { getPromptMentionParts } from '../lib/promptImageMentions'
@@ -895,6 +895,12 @@ export default function AgentWorkspace() {
                       </div>
                     )}
 
+                    {isAssistant && round?.status === 'partial' && (
+                      <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-700 dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-300">
+                        图片已保留，文字回复未完成。{round.error ? ` ${round.error}` : ''}
+                      </div>
+                    )}
+
                       </article>
 
                     {!isStreamingAssistant && <div className={`mt-2 flex w-full min-w-fit items-center justify-between gap-3 px-1 transition-opacity duration-200 ${isEditing || hasBranches ? 'opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100'}`} onClick={e => e.stopPropagation()}>
@@ -932,13 +938,29 @@ export default function AgentWorkspace() {
                         )}
                         {isAssistant ? (
                           <>
+                            {round?.status === 'partial' && conversation && (
+                              <button
+                                type="button"
+                                className="rounded-md px-2 py-1 text-xs font-medium text-orange-600 transition-colors hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-500/10"
+                                onClick={() => void continueAgentResponse(conversation.id, round.id)}
+                              >
+                                继续回复
+                              </button>
+                            )}
                             <AgentActionButton tooltip="复制输出文本" className={`p-1.5 rounded-md transition-colors ${message.content.trim() ? 'text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-white/[0.06]' : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={!message.content.trim()} onClick={() => {
                               void handleCopyMessage(getAgentAssistantCopyContent(message.content, assistantBlocks), '输出文本已复制', '复制输出文本失败');
                             }}>
                               <CopyIcon className="w-4 h-4" />
                             </AgentActionButton>
-                            <AgentActionButton tooltip="重新生成" className="p-1.5 rounded-md text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors" onClick={() => {
-                              if (conversation && round) void regenerateAgentAssistantMessage(conversation.id, round.id);
+                            <AgentActionButton tooltip="重新生成本轮" className="p-1.5 rounded-md text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors" onClick={() => {
+                              if (!conversation || !round) return;
+                              setConfirmDialog({
+                                title: '重新生成本轮',
+                                message: '这会重新执行本轮完整工具链，可能再次生成图片并产生重复费用。是否继续？',
+                                confirmText: '重新生成',
+                                tone: 'warning',
+                                action: () => regenerateAgentAssistantMessage(conversation.id, round.id),
+                              });
                             }}>
                               <RefreshIcon className="w-4 h-4" />
                             </AgentActionButton>

@@ -2,6 +2,7 @@ import type { ApiProfile, TaskParams } from '../../types'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
 import Select from '../Select'
 import ButtonTooltip from './buttonTooltip'
+import { GEMINI_IMAGE_SIZES, getGeminiAspectRatios } from '../../lib/geminiCapabilities'
 
 interface HintTooltipState {
   visible: boolean
@@ -18,6 +19,7 @@ export default function InputParamsPanel({
   activeProfile,
   isFalProvider,
   isFalTextToImage,
+  isGeminiProvider,
   displaySize,
   qualityOptions,
   selectClass,
@@ -58,6 +60,7 @@ export default function InputParamsPanel({
   activeProfile: ApiProfile
   isFalProvider: boolean
   isFalTextToImage: boolean
+  isGeminiProvider: boolean
   displaySize: string
   qualityOptions: Array<{ label: string; value: string }>
   selectClass: string
@@ -92,6 +95,36 @@ export default function InputParamsPanel({
   qualityHint: HintTooltipState
   onOpenSizePicker: () => void
 }) {
+  if (isGeminiProvider) {
+    return (
+      <div className={`grid ${cols} gap-2 text-xs flex-1`}>
+        <label className="flex min-w-0 flex-col gap-0.5">
+          <span className="ml-1 text-gray-400 dark:text-gray-500">比例</span>
+          <Select
+            value={params.geminiAspectRatio ?? 'auto'}
+            onChange={(value) => setParams({ geminiAspectRatio: String(value) })}
+            options={[
+              { label: '自动', value: 'auto' },
+              ...getGeminiAspectRatios(activeProfile.model).map((value) => ({ label: value, value })),
+            ]}
+            showValueTooltips={false}
+            className={selectClass}
+          />
+        </label>
+        <label className="flex min-w-0 flex-col gap-0.5">
+          <span className="ml-1 text-gray-400 dark:text-gray-500">分辨率</span>
+          <Select
+            value={params.geminiImageSize ?? 'auto'}
+            onChange={(value) => setParams({ geminiImageSize: value as TaskParams['geminiImageSize'] })}
+            options={GEMINI_IMAGE_SIZES.map((value) => ({ label: value === 'auto' ? '自动' : value, value }))}
+            showValueTooltips={false}
+            className={selectClass}
+          />
+        </label>
+      </div>
+    )
+  }
+
   return (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
       <label

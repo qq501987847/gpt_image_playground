@@ -2497,6 +2497,62 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   void executeAgentRound(conversationId, newRoundId, normalizedParams, requestSettings, activeProfile, imageProfile)
 }
 
+export async function continueAgentResponse(conversationId: string, roundId: string) {
+  const state = useStore.getState()
+  const normalizedSettings = normalizeSettings(state.settings)
+  const conversation = state.agentConversations.find((item) => item.id === conversationId)
+  const round = conversation?.rounds.find((item) => item.id === roundId)
+  if (!conversation || !round || round.status !== 'partial' || !round.responseOutput?.length) {
+    state.showToast('找不到可继续的 Agent 回复', 'error')
+    return
+  }
+  if (conversation.rounds.some((item) => item.status === 'running')) {
+    state.showToast('请等待生成完成，或先停止生成', 'info')
+    return
+  }
+
+  const agentValidationError = getAgentProfileValidationError(normalizedSettings)
+  if (agentValidationError) {
+    state.showToast(`请先完善 Agent API 配置：${agentValidationError.message}`, 'error')
+    state.setShowSettings(true, normalizedSettings.agentApiConfigMode === 'off' ? 'api' : 'agent')
+    return
+  }
+
+  const activeProfile = getAgentTextApiProfile(normalizedSettings)!
+  const imageProfile = getAgentImageApiProfile(normalizedSettings)!
+  const successfulTasks = round.outputTaskIds
+    .map((taskId) => state.tasks.find((task) => task.id === taskId))
+    .filter((task): task is TaskRecord => Boolean(task?.status === 'done' && task.outputImages.length > 0))
+  if (successfulTasks.length === 0) {
+    state.showToast('本轮没有可复用的已生成图片', 'error')
+    return
+  }
+
+  const params = successfulTasks[0]?.params
+    ?? normalizeParamsForSettings(state.params, createSettingsForApiProfile(normalizedSettings, imageProfile), { hasInputImages: round.inputImageIds.length > 0 })
+  updateAgentConversation(conversationId, (current) => ({
+    ...current,
+    updatedAt: Date.now(),
+    rounds: current.rounds.map((item) => item.id === roundId
+      ? { ...item, status: 'running', error: null, finishedAt: null }
+      : item),
+  }))
+  void executeAgentRound(
+    conversationId,
+    roundId,
+    params,
+    createSettingsForApiProfile(normalizedSettings, activeProfile),
+    activeProfile,
+    imageProfile,
+    {
+      responseOutput: round.responseOutput,
+      recoveredTaskIds: successfulTasks.map((task) => task.id),
+      toolCallsUsed: getAgentRecoveredToolCallCount(round.responseOutput, successfulTasks),
+      continuationOnly: true,
+    },
+  )
+}
+
 async function executeAgentRound(
   conversationId: string,
   roundId: string,
@@ -2504,7 +2560,7 @@ async function executeAgentRound(
   requestSettings: AppSettings,
   activeProfile: ApiProfile,
   imageProfile: ApiProfile,
-  resume?: { responseOutput: ResponsesOutputItem[]; recoveredTaskIds: string[]; toolCallsUsed: number },
+  resume?: { responseOutput: ResponsesOutputItem[]; recoveredTaskIds: string[]; toolCallsUsed: number; continuationOnly?: boolean },
 ) {
   const startedAt = Date.now()
   const controller = new AbortController()
@@ -2741,9 +2797,10 @@ async function executeAgentRound(
         toolCallsUsed,
         maxToolCalls,
         loadImage: ensureImageCached,
+        continuationOnly: resume.continuationOnly,
       })
     }
-    let reachedToolLimit = resume ? toolCallsUsed >= maxToolCalls : false
+    let reachedToolLimit = resume?.continuationOnly ? false : resume ? toolCallsUsed >= maxToolCalls : false
     let pendingToolTextSeparator = false
 
     // Helper: resolve reference image ids to data URLs for batch image calls
@@ -3059,6 +3116,7 @@ async function executeAgentRound(
         input: apiInputForTurn,
         maskDataUrl,
         signal: controller.signal,
+        allowImageTools: !resume?.continuationOnly,
         onTextDelta: shouldStreamAssistantMessage
           ? (delta) => {
               if (controller.signal.aborted) return
@@ -3146,7 +3204,7 @@ async function executeAgentRound(
       if (newTextInThisResponse) textSegments.push(newTextInThisResponse)
 
       // Process built-in image_generation_call results (single images)
-      for (const image of result.images) {
+      for (const image of resume?.continuationOnly ? [] : result.images) {
         if (image.toolCallId && taskIdByToolCallId.has(image.toolCallId)) {
           const completed = await completeAgentImageTask(image, result.rawResponsePayload)
           if (!completed.committed) continue
@@ -3213,13 +3271,13 @@ async function executeAgentRound(
       }
 
       // Check for function calls that require continuation
-      const imageFunctionCalls = currentResponseOutputItems.filter(
+      const imageFunctionCalls = (resume?.continuationOnly ? [] : currentResponseOutputItems).filter(
         (item) => item.type === 'function_call' && item.name === 'generate_image',
       )
-      const batchFunctionCalls = currentResponseOutputItems.filter(
+      const batchFunctionCalls = (resume?.continuationOnly ? [] : currentResponseOutputItems).filter(
         (item) => item.type === 'function_call' && item.name === 'generate_image_batch',
       )
-      const continueFunctionCalls = currentResponseOutputItems.filter(
+      const continueFunctionCalls = (resume?.continuationOnly ? [] : currentResponseOutputItems).filter(
         (item) => item.type === 'function_call' && item.name === 'continue_generation',
       )
 
@@ -3317,6 +3375,7 @@ async function executeAgentRound(
         toolCallsUsed,
         maxToolCalls,
         loadImage: ensureImageCached,
+        continuationOnly: resume?.continuationOnly,
       })
       accumulatedOutputItems = accumulatedOutputItemsWithFunctionOutputs
       pendingToolTextSeparator = true
@@ -3401,6 +3460,42 @@ async function executeAgentRound(
     }
 
     markAgentRoundTasksFailed(conversationId, roundId, message, getRawErrorPayload(err).rawResponsePayload)
+
+    const partialState = useStore.getState()
+    const partialConversation = partialState.agentConversations.find((item) => item.id === conversationId)
+    const partialRound = partialConversation?.rounds.find((item) => item.id === roundId)
+    const successfulTaskIds = (partialRound?.outputTaskIds ?? []).filter((taskId) => {
+      const task = partialState.tasks.find((item) => item.id === taskId)
+      return task?.status === 'done' && task.outputImages.length > 0
+    })
+    if (partialConversation && partialRound && successfulTaskIds.length > 0) {
+      const existingAssistantMessage = partialRound.assistantMessageId
+        ? partialConversation.messages.find((item) => item.id === partialRound.assistantMessageId)
+        : partialConversation.messages.find((item) => item.roundId === roundId && item.role === 'assistant')
+      const assistantMessageId = existingAssistantMessage?.id ?? genId()
+      const assistantMessage: AgentMessage = existingAssistantMessage
+        ? { ...existingAssistantMessage, outputTaskIds: [...new Set([...(existingAssistantMessage.outputTaskIds ?? []), ...successfulTaskIds])] }
+        : {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '图像已生成，回复尚未完成。',
+            roundId,
+            outputTaskIds: successfulTaskIds,
+            createdAt: Date.now(),
+          }
+      updateAgentConversation(conversationId, (current) => ({
+        ...current,
+        updatedAt: Date.now(),
+        rounds: current.rounds.map((item) => item.id === roundId
+          ? { ...item, assistantMessageId, status: 'partial', error: message, finishedAt: Date.now() }
+          : item),
+        messages: current.messages.some((item) => item.id === assistantMessageId)
+          ? current.messages.map((item) => item.id === assistantMessageId ? assistantMessage : item)
+          : [...current.messages, assistantMessage],
+      }))
+      partialState.showToast('图片已保留，Agent 回复未完成', 'error')
+      return
+    }
 
     updateAgentConversation(conversationId, (current) => {
       const failedRound = current.rounds.find((round) => round.id === roundId)

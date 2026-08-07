@@ -82,7 +82,12 @@ function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
 }
 
 export function createPersistedState(state: PersistedStateSource, includeLegacyAgentConversations = false): PersistedAppState {
-  const settings = normalizeSettings(state.settings)
+  const normalizedSettings = normalizeSettings(state.settings)
+  const profiles = normalizedSettings.profiles.map((profile) => profile.keyId ? { ...profile, apiKey: '' } : profile)
+  const active = profiles.find((profile) => profile.id === normalizedSettings.activeProfileId) ?? profiles[0]
+  const settings = active && active.keyId
+    ? { ...normalizedSettings, apiKey: '', profiles }
+    : { ...normalizedSettings, profiles }
   const galleryInputDraft = saveGalleryInputDraft(state)
   return {
     settings,
