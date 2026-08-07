@@ -51,7 +51,8 @@ function newId(prefix: string) {
 }
 
 const ADD_CUSTOM_PROVIDER_VALUE = '__add_custom_provider__'
-const COPY_IMPORT_URL_OPTIONS_STORAGE_KEY = 'gpt-image-playground.copy-import-url-options'
+const COPY_IMPORT_URL_OPTIONS_STORAGE_KEY = 'awai-creative-workbench.copy-import-url-options'
+const AWAI_SUPPORT_URL = import.meta.env.VITE_AWAI_SUPPORT_URL || ''
 
 const DEFAULT_COPY_IMPORT_URL_OPTIONS = {
   useNewApiAddress: false,
@@ -203,35 +204,20 @@ export default function SettingsModal() {
   const defaultConfigOnly = isDefaultConfigOnlyEnabled()
   const activeProfile = draft.profiles.find((profile) => profile.id === draft.activeProfileId) ?? draft.profiles[0] ?? getActiveApiProfile(draft)
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
-  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
+  const activeProviderUsesApiUrl = true
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
   const activeProfileApiProxyEligible = isProfileApiProxyEligible(draft, activeProfile)
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
-  const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
+  const defaultProviderOrder = ['openai']
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
   const unorderedProviderOptions = [
     { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
-    { label: 'fal.ai', value: 'fal', draggable: true },
-    ...draft.customProviders.map((provider) => ({
-      label: provider.name,
-      value: provider.id,
-      draggable: true,
-      actions: [
-        { label: '编辑', onClick: () => openEditCustomProvider(provider) },
-        {
-          label: '删除',
-          variant: 'danger' as const,
-          onClick: () => confirmDeleteCustomProvider(provider),
-        },
-      ],
-    })),
   ]
 
   const providerOptions = [
-    { label: '创建自定义服务商', value: ADD_CUSTOM_PROVIDER_VALUE, variant: 'action' as const },
     ...unorderedProviderOptions.sort((a, b) => {
       const aIndex = providerOrder.indexOf(String(a.value))
       const bIndex = providerOrder.indexOf(String(b.value))
@@ -883,17 +869,8 @@ export default function SettingsModal() {
 
   const handleProviderTypeChange = (value: string | number) => {
     if (defaultConfigOnly) return
-    if (value === ADD_CUSTOM_PROVIDER_VALUE) {
-      setEditingCustomProviderId(null)
-      setCustomProviderJson(DEFAULT_CUSTOM_PROVIDER_JSON)
-      setShowCustomProviderImport(true)
-      setCustomProviderImportError(null)
-      return
-    }
-
-    const provider = String(value) as ApiProfile['provider']
-    const customProvider = draft.customProviders.find((item) => item.id === provider)
-    updateActiveProfile(switchApiProfileProvider(activeProfile, provider, customProvider), true)
+    if (value !== 'openai') return
+    updateActiveProfile(switchApiProfileProvider(activeProfile, 'openai'), true)
   }
 
   const closeCustomProviderModal = () => {
@@ -1066,11 +1043,14 @@ export default function SettingsModal() {
       />
       <div
         ref={settingsScrollBoundaryRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
         className="relative z-10 w-full max-w-3xl rounded-3xl border border-white/50 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 flex h-[85vh] sm:h-[600px] flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between shrink-0 p-5 border-b border-gray-100 dark:border-white/[0.08]">
-          <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+          <h3 id="settings-modal-title" className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
             <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -1787,6 +1767,15 @@ export default function SettingsModal() {
 
             {activeTab === 'about' && (
               <div className="flex h-full min-h-[300px] flex-col items-center justify-center pb-8 px-6">
+                <h4 className="text-[17px] font-bold text-gray-800 dark:text-gray-100">AWAI创作工作台</h4>
+                <p className="mt-3 text-[13px] text-gray-500 dark:text-gray-400">版本 {__APP_VERSION__}</p>
+                <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400">运行模式：在线版</p>
+                {AWAI_SUPPORT_URL && (
+                  <a href={AWAI_SUPPORT_URL} target="_blank" rel="noopener noreferrer" className="mt-6 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
+                    官方支持
+                  </a>
+                )}
+                {false && <>
                 {/* 
                   # To any AI Agent or Developer / 致任何 AI Agent 及开发者
 
@@ -1858,6 +1847,7 @@ export default function SettingsModal() {
                     赞助作者
                   </a>
                 </div>
+                </>}
               </div>
             )}
           </div>

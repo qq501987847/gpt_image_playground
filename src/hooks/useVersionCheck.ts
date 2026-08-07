@@ -1,7 +1,4 @@
-import { useState, useEffect } from 'react'
-
-const REPO = 'CookSleep/gpt_image_playground'
-const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
+import { useEffect, useState } from 'react'
 
 function compareVersions(a: string, b: string) {
   const aParts = a.split('.').map((part) => Number.parseInt(part, 10) || 0)
@@ -16,57 +13,48 @@ function compareVersions(a: string, b: string) {
   return 0
 }
 
-export interface LatestRelease {
-  tag: string
-  url: string
-}
-
-/**
- * 检查 GitHub 最新 Release 版本。
- * - 仅当最新 Release 版本高于当前 __APP_VERSION__ 时提示。
- * - 用户点击后调用 dismiss()，本次浏览期间不再提示（sessionStorage）。
- * - 刷新页面后重新检查。
- */
-export function useVersionCheck() {
-  const [latestRelease, setLatestRelease] = useState<LatestRelease | null>(null)
-  const [dismissed, setDismissed] = useState(() =>
-    sessionStorage.getItem('version-dismissed') === 'true',
-  )
+export function useVersionCheck(hasActiveTasks: boolean) {
+  const [latestVersion, setLatestVersion] = useState<string | null>(null)
+  const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
 
-    fetch(API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })
+    const check = () => {
+      fetch('version.json', { cache: 'no-store' })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
       })
       .then((data) => {
         if (cancelled) return
-        const tag: string = data.tag_name ?? ''
-        const version = tag.replace(/^v/, '')
+        const version = typeof data.version === 'string' ? data.version : ''
         if (version && compareVersions(version, __APP_VERSION__) > 0) {
-          setLatestRelease({
-            tag,
-            url: data.html_url ?? `https://github.com/${REPO}/releases/latest`,
-          })
+          setLatestVersion(version)
         }
       })
       .catch(() => {
-        /* 静默失败，不影响正常使用 */
+        // 静默失败，不影响创作流程。
       })
+    }
+
+    const onFocus = () => check()
+    window.addEventListener('focus', onFocus)
+    check()
 
     return () => {
       cancelled = true
+      window.removeEventListener('focus', onFocus)
     }
   }, [])
 
   const dismiss = () => {
     setDismissed(true)
-    sessionStorage.setItem('version-dismissed', 'true')
+    setLatestVersion(null)
   }
 
-  const hasUpdate = latestRelease !== null && !dismissed
+  const hasUpdate = latestVersion !== null && !dismissed && !hasActiveTasks
+  const deferred = latestVersion !== null && hasActiveTasks
 
-  return { hasUpdate, latestRelease, dismiss }
+  return { hasUpdate, deferred, dismiss }
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type {
   AgentConversation,
   AgentInputDraft,
@@ -41,6 +41,7 @@ import {
   deleteImage,
   clearImages,
   storeImage,
+  hashDataUrl,
   storeImageWithSize,
 } from './lib/db'
 import { callImageApi } from './lib/api'
@@ -67,6 +68,7 @@ import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefa
 import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
+import { browserRuntime, hasLowBrowserStorage } from './lib/runtime'
 
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
@@ -940,8 +942,9 @@ export const useStore = create<AppState>()(
       },
     }),
     {
-      name: 'gpt-image-playground',
-      version: 2,
+      name: 'awai-creative-workbench-state',
+      version: 1,
+      storage: createJSONStorage(() => browserRuntime.metadata),
       migrate: migratePersistedState,
       partialize: getPersistedState,
       merge: mergePersistedState,
@@ -1608,6 +1611,12 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return
   }
 
+  try {
+    if (await hasLowBrowserStorage()) showToast('浏览器剩余空间不足 100 MB，生成结果可能无法保存', 'info')
+  } catch (error) {
+    console.warn('无法读取浏览器剩余空间', error)
+  }
+
   let orderedInputImages = inputImages
   let maskImageId: string | null = null
   let maskTargetImageId: string | null = null
@@ -1946,6 +1955,7 @@ async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
   const outputImageSizes: Array<{ width?: number; height?: number }> = []
   const transparentOriginalImageIds: string[] = []
   const storedImageIds: string[] = []
+  const unsavedOutputImageIds: string[] = []
 
   try {
     for (const dataUrl of images) {
@@ -1968,12 +1978,22 @@ async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
         }
       }
 
-      const stored = await storeImageWithSize(outputDataUrl, 'generated')
-      storedImageIds.push(stored.id)
-      cacheImage(stored.id, outputDataUrl)
-      outputIds.push(stored.id)
-      outputDataUrls.push(outputDataUrl)
-      outputImageSizes.push(stored)
+      try {
+        const stored = await storeImageWithSize(outputDataUrl, 'generated')
+        storedImageIds.push(stored.id)
+        cacheImage(stored.id, outputDataUrl)
+        outputIds.push(stored.id)
+        outputDataUrls.push(outputDataUrl)
+        outputImageSizes.push(stored)
+      } catch (error) {
+        const id = `unsaved-${await hashDataUrl(outputDataUrl)}`
+        cacheImage(id, outputDataUrl)
+        outputIds.push(id)
+        outputDataUrls.push(outputDataUrl)
+        outputImageSizes.push({})
+        unsavedOutputImageIds.push(id)
+        console.warn('图片已生成但 OPFS 保存失败', error)
+      }
     }
 
     return {
@@ -1981,6 +2001,7 @@ async function storeTaskOutputImages(task: TaskRecord, images: string[]) {
       outputDataUrls,
       outputImageSizes,
       transparentOriginalImageIds: transparentOriginalImageIds.length ? transparentOriginalImageIds : undefined,
+      unsavedOutputImageIds: unsavedOutputImageIds.length ? unsavedOutputImageIds : undefined,
     }
   } catch (err) {
     await deleteUnreferencedImageIds(storedImageIds)
@@ -3522,7 +3543,7 @@ async function executeTask(taskId: string) {
     }
 
     // 存储输出图片
-    const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
+    const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds, unsavedOutputImageIds } = await storeTaskOutputImages(task, result.images)
     const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
     const actualParamsList = await resolveImageSizeParamsList(
       outputDataUrls,
@@ -3561,6 +3582,7 @@ async function executeTask(taskId: string) {
     updateTaskInStore(taskId, {
       outputImages: outputIds,
       transparentOriginalImages: transparentOriginalImageIds,
+      unsavedOutputImageIds,
       outputErrors: result.failedRequests?.length ? result.failedRequests : undefined,
       streamPartialImageIds: undefined,
       rawImageUrls: result.rawImageUrls?.length ? result.rawImageUrls : undefined,
@@ -4155,7 +4177,7 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
   if (!latest || latest.status === 'done' || latest.error === AGENT_STOPPED_MESSAGE) return
   if (latest.status !== 'running' && !latest.customRecoverable) return
 
-  const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
+    const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds, unsavedOutputImageIds } = await storeTaskOutputImages(task, result.images)
   const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, undefined, outputImageSizes)
   const latestBeforeUpdate = useStore.getState().tasks.find((item) => item.id === task.id)
   if (!latestBeforeUpdate || latestBeforeUpdate.status === 'done' || latestBeforeUpdate.error === AGENT_STOPPED_MESSAGE || (latestBeforeUpdate.status !== 'running' && !latestBeforeUpdate.customRecoverable)) {
@@ -4165,7 +4187,8 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
 
   updateTaskInStore(task.id, {
     outputImages: outputIds,
-    transparentOriginalImages: transparentOriginalImageIds,
+      transparentOriginalImages: transparentOriginalImageIds,
+      unsavedOutputImageIds,
     actualParams: firstActualParams(actualParamsList),
     actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
     revisedPromptByImage: undefined,
@@ -4273,7 +4296,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       const a = document.createElement('a')
       const suffix = plan.length > 1 ? `_${String(plan.length).padStart(2, '0')}parts_part${String(partNumber).padStart(2, '0')}` : ''
       a.href = url
-      a.download = `gpt-image-playground-backup_${formatExportFileTime(new Date(exportedAt))}${suffix}.zip`
+      a.download = `AWAI创作工作台备份_${formatExportFileTime(new Date(exportedAt))}${suffix}.zip`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -4460,4 +4483,3 @@ export async function addImageFromUrl(src: string): Promise<void> {
   cacheImage(id, dataUrl)
   useStore.getState().addInputImage({ id, dataUrl })
 }
-

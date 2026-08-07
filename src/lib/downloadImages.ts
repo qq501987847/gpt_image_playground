@@ -2,6 +2,7 @@ import { zipSync } from 'fflate'
 import type { TaskRecord } from '../types'
 import { getNumberedFileNameBase, sanitizeFileNamePart } from './exportFileName'
 import { ensureImageCached } from './imageCache'
+import { browserRuntime } from './runtime'
 
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/png': 'png',
@@ -114,14 +115,7 @@ async function getImageBlob(imageIdOrUrl: string): Promise<Blob> {
 }
 
 function triggerDownload(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  void browserRuntime.downloads.save(blob, fileName)
 }
 
 function getBlobExtension(blob: Blob): string {
@@ -131,4 +125,3 @@ function getBlobExtension(blob: Blob): string {
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
-

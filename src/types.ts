@@ -243,6 +243,8 @@ export interface TaskRecord {
   agentBatchItemId?: string
   /** Agent 图像工具实际动作 */
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
+  /** OPFS 写入失败后仅在当前页面保留的输出 */
+  unsavedOutputImageIds?: string[]
 }
 
 export interface FavoriteCollection {

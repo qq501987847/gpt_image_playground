@@ -254,12 +254,11 @@ describe('URL settings params', () => {
       ...buildSettingsFromUrlParams(DEFAULT_SETTINGS, params),
     })
 
-    expect(next.customProviders).toHaveLength(1)
-    expect(next.customProviders[0]).toMatchObject({ id: 'custom-json', name: 'Custom JSON' })
+    expect(next.customProviders).toHaveLength(0)
     expect(next.activeProfileId).toBe('custom-profile')
     expect(next.profiles[0]).toMatchObject({
       id: 'custom-profile',
-      provider: 'custom-json',
+      provider: 'openai',
       apiKey: 'custom-key',
       model: 'custom-model',
     })
@@ -313,7 +312,7 @@ describe('URL settings params', () => {
 
     expect(next.activeProfileId).not.toBe('current-openai')
     expect(activeProfile).toMatchObject({
-      provider: 'custom-json',
+      provider: 'openai',
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'custom-key',
       model: 'custom-model',
@@ -356,12 +355,11 @@ describe('URL settings params', () => {
       ...buildSettingsFromUrlParams(DEFAULT_SETTINGS, params),
     })
 
-    expect(next.customProviders).toHaveLength(1)
-    expect(next.customProviders[0]).toMatchObject({ id: 'wrapped-custom', name: 'Wrapped Custom' })
+    expect(next.customProviders).toHaveLength(0)
     expect(next.profiles).toHaveLength(1)
     expect(next.profiles[0]).toMatchObject({
       id: 'wrapped-profile',
-      provider: 'wrapped-custom',
+      provider: 'openai',
       baseUrl: 'https://wrapped.example.com/v1',
       apiKey: 'wrapped-key',
       model: 'wrapped-model',
@@ -564,19 +562,18 @@ describe('URL settings params', () => {
       ...buildSettingsFromUrlParams(current, params),
     })
 
-    expect(next.customProviders).toHaveLength(1)
-    expect(next.customProviders[0].id).toBe(customProvider.id)
+    expect(next.customProviders).toHaveLength(0)
     expect(next.profiles).toHaveLength(1)
     expect(next.activeProfileId).toBe(current.activeProfileId)
     expect(next.profiles[0]).toMatchObject({
       id: current.activeProfileId,
-      provider: customProvider.id,
-      name: 'Patched Custom Default',
-      baseUrl: 'https://patched-custom.example.com/v1',
-      apiKey: 'patched-custom-key',
-      model: 'patched-custom-model',
-      timeout: 240,
-      apiMode: 'images',
+      provider: 'openai',
+      name: 'Ignored OpenAI',
+      baseUrl: 'https://openai.example.com/v1',
+      apiKey: 'openai-key',
+      model: 'openai-model',
+      timeout: 120,
+      apiMode: 'responses',
     })
   })
 })

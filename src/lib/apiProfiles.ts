@@ -89,7 +89,8 @@ function normalizeZipDownloadRoutes(value: unknown) {
 function normalizeProviderOrder(value: unknown, customProviders: CustomProviderDefinition[]): string[] | undefined {
   if (!Array.isArray(value)) return undefined
 
-  const providerIds = ['openai', 'fal', ...customProviders.map((provider) => provider.id)]
+  void customProviders
+  const providerIds = ['openai']
   const knownIds = new Set(providerIds)
   const ordered = value
     .map(String)
@@ -507,8 +508,9 @@ function validateImportedProfileRecord(input: unknown) {
 
 export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSettings {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
-  const customProviders = normalizeCustomProviderDefinitions(record.customProviders)
-  const customProviderIds = new Set(customProviders.map((provider) => provider.id))
+  // AWAI 首发不恢复旧版 FAL 或任意 HTTP 服务商配置。
+  const customProviders: CustomProviderDefinition[] = []
+  const customProviderIds = new Set<string>()
   const legacyApiMode: ApiMode = record.apiMode === 'responses' ? 'responses' : 'images'
   const legacyProfile = createDefaultOpenAIProfile({
     baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : DEFAULT_BASE_URL,
@@ -583,18 +585,20 @@ export function getAgentImageApiProfile(settings: Partial<AppSettings> | unknown
 }
 
 export function getCustomProviderDefinition(settings: Partial<AppSettings> | unknown, provider: ApiProvider): CustomProviderDefinition | null {
-  const normalized = normalizeSettings(settings)
-  return normalized.customProviders.find((item) => item.id === provider) ?? null
+  void settings
+  void provider
+  return null
 }
 
 export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, provider: ApiProvider): string {
-  if (provider === 'fal') return 'fal.ai'
+  void settings
   if (provider === 'openai') return 'OpenAI'
-  return getCustomProviderDefinition(settings, provider)?.name ?? provider
+  return 'OpenAI'
 }
 
 export function isOpenAICompatibleProvider(settings: Partial<AppSettings> | unknown, provider: ApiProvider): boolean {
-  return provider === 'openai' || Boolean(getCustomProviderDefinition(settings, provider))
+  void settings
+  return provider === 'openai'
 }
 
 export interface ImportedProviderSettings {

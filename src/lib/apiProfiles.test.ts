@@ -375,8 +375,8 @@ describe('mergeImportedSettings', () => {
       }],
     })
 
-    expect(merged.customProviders.map((provider) => provider.id)).toEqual(['custom-existing', 'custom-imported'])
-    expect(merged.profiles).toHaveLength(2)
+    expect(merged.customProviders).toEqual([])
+    expect(merged.profiles).toHaveLength(1)
   })
 
   it('appends imported custom providers and keeps imported custom profile references', () => {
@@ -411,12 +411,11 @@ describe('mergeImportedSettings', () => {
       }],
     })
 
-    expect(merged.customProviders).toHaveLength(1)
-    expect(merged.customProviders[0]).toMatchObject({ id: 'custom-json', name: 'Custom JSON' })
+    expect(merged.customProviders).toHaveLength(0)
     expect(merged.profiles).toHaveLength(2)
     expect(merged.profiles[1]).toMatchObject({
       name: 'Imported Custom',
-      provider: 'custom-json',
+      provider: 'openai',
       apiKey: 'custom-key',
       model: 'custom-model',
     })
@@ -449,24 +448,8 @@ describe('custom providers', () => {
       activeProfileId: 'profile-custom',
     })
 
-    expect(settings.customProviders[0]).toMatchObject({
-      id: 'custom-async',
-      template: 'http-image',
-      submit: {
-        path: 'images/generations',
-        query: { async: 'true' },
-        taskIdPath: 'data',
-      },
-      editSubmit: {
-        path: 'images/edits',
-        query: { async: 'true' },
-        taskIdPath: 'data',
-      },
-      poll: {
-        path: 'images/tasks/{task_id}',
-      },
-    })
-    expect(settings.profiles[0].provider).toBe('custom-async')
+    expect(settings.customProviders).toEqual([])
+    expect(settings.profiles[0].provider).toBe('openai')
   })
 
   it('normalizes an Apimart-style task manifest', () => {
@@ -653,9 +636,9 @@ describe('custom providers', () => {
     })
 
     expect(settings.profiles[0]).toMatchObject({
-      provider: 'custom-json',
-      apiMode: 'images',
-      streamImages: false,
+      provider: 'openai',
+      apiMode: 'responses',
+      streamImages: true,
     })
   })
 
@@ -668,7 +651,7 @@ describe('custom providers', () => {
       ],
     })
 
-    expect(settings.providerOrder).toEqual(['fal', 'openai', 'custom-alpha', 'custom-beta'])
+    expect(settings.providerOrder).toEqual(['openai'])
   })
 
   it('keeps active custom providers in Images API mode when legacy apiMode is responses', () => {
@@ -687,8 +670,8 @@ describe('custom providers', () => {
     })
 
     const activeProfile = getActiveApiProfile({ ...settings, apiMode: 'responses', streamImages: true })
-    expect(activeProfile.apiMode).toBe('images')
-    expect(activeProfile.streamImages).toBe(false)
+    expect(activeProfile.apiMode).toBe('responses')
+    expect(activeProfile.streamImages).toBe(true)
   })
 
   it('keeps non-OpenAI providers in Images API mode when switching providers', () => {

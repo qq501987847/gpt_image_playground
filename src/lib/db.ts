@@ -1,7 +1,6 @@
 import type { AgentConversation, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import { browserRuntime, openAwaiDatabase } from './runtime'
 
-const DB_NAME = 'gpt-image-playground'
-const DB_VERSION = 3
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
 const STORE_THUMBNAILS = 'thumbnails'
@@ -12,27 +11,19 @@ const THUMBNAIL_VERSION = 2
 
 export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
 
+type StoredImageIndex = Omit<StoredImage, 'dataUrl'>
+type StoredThumbnailIndex = Omit<StoredImageThumbnail, 'thumbnailDataUrl'>
+
+function imagePath(id: string) {
+  return `images/${id}.original`
+}
+
+function thumbnailPath(id: string) {
+  return `thumbnails/${id}.webp`
+}
+
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
-    req.onupgradeneeded = (e) => {
-      const db = (e.target as IDBOpenDBRequest).result
-      if (!db.objectStoreNames.contains(STORE_TASKS)) {
-        db.createObjectStore(STORE_TASKS, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_IMAGES)) {
-        db.createObjectStore(STORE_IMAGES, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_THUMBNAILS)) {
-        db.createObjectStore(STORE_THUMBNAILS, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_AGENT_CONVERSATIONS)) {
-        db.createObjectStore(STORE_AGENT_CONVERSATIONS, { keyPath: 'id' })
-      }
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
+  return openAwaiDatabase()
 }
 
 function dbTransaction<T>(
@@ -119,11 +110,19 @@ export function replaceAgentConversations(conversations: AgentConversation[]): P
 // ===== Images =====
 
 export function getImage(id: string): Promise<StoredImage | undefined> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.get(id))
+  return dbTransaction<StoredImageIndex | undefined>(STORE_IMAGES, 'readonly', (s) => s.get(id)).then(async (index) => {
+    if (!index) return undefined
+    const dataUrl = await browserRuntime.files.read(imagePath(id))
+    return dataUrl ? { ...index, dataUrl } : undefined
+  })
 }
 
 export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
-  return dbTransaction(STORE_THUMBNAILS, 'readonly', (s) => s.get(id))
+  return dbTransaction<StoredThumbnailIndex | undefined>(STORE_THUMBNAILS, 'readonly', (s) => s.get(id)).then(async (index) => {
+    if (!index) return undefined
+    const thumbnailDataUrl = await browserRuntime.files.read(thumbnailPath(id))
+    return thumbnailDataUrl ? { ...index, thumbnailDataUrl } : undefined
+  })
 }
 
 export async function getStoredFreshImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
@@ -132,7 +131,10 @@ export async function getStoredFreshImageThumbnail(id: string): Promise<StoredIm
 }
 
 export function putImageThumbnail(thumbnail: StoredImageThumbnail): Promise<IDBValidKey> {
-  return dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(thumbnail))
+  const { thumbnailDataUrl, ...index } = thumbnail
+  return browserRuntime.files.write(thumbnailPath(thumbnail.id), thumbnailDataUrl).then(() =>
+    dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(index)),
+  )
 }
 
 export async function getImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
@@ -180,7 +182,13 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
 }
 
 export function getAllImages(): Promise<StoredImage[]> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAll())
+  return dbTransaction<StoredImageIndex[]>(STORE_IMAGES, 'readonly', (s) => s.getAll()).then(async (indexes) => {
+    const images = await Promise.all(indexes.map(async (index) => {
+      const dataUrl = await browserRuntime.files.read(imagePath(index.id))
+      return dataUrl ? { ...index, dataUrl } : null
+    }))
+    return images.filter((image): image is StoredImage => image !== null)
+  })
 }
 
 export function getAllImageIds(): Promise<string[]> {
@@ -190,7 +198,10 @@ export function getAllImageIds(): Promise<string[]> {
 }
 
 export function putImage(image: StoredImage): Promise<IDBValidKey> {
-  return dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put(image))
+  const { dataUrl, ...index } = image
+  return browserRuntime.files.write(imagePath(image.id), dataUrl).then(() =>
+    dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put(index)),
+  )
 }
 
 export function deleteImage(id: string): Promise<undefined> {
@@ -203,7 +214,10 @@ export function deleteImage(id: string): Promise<undefined> {
         tx.oncomplete = () => resolve(undefined)
         tx.onerror = () => reject(tx.error)
       }),
-  )
+  ).then(async () => {
+    await Promise.all([browserRuntime.files.remove(imagePath(id)), browserRuntime.files.remove(thumbnailPath(id))])
+    return undefined
+  })
 }
 
 export function clearImages(): Promise<undefined> {
@@ -216,7 +230,10 @@ export function clearImages(): Promise<undefined> {
         tx.oncomplete = () => resolve(undefined)
         tx.onerror = () => reject(tx.error)
       }),
-  )
+  ).then(async () => {
+    await browserRuntime.files.clear()
+    return undefined
+  })
 }
 
 // ===== Image hashing & dedup =====
@@ -267,22 +284,22 @@ export async function storeImageWithSize(dataUrl: string, source: NonNullable<St
   const existing = await getImage(id)
   if (!existing) {
     const thumbnail = await safeCreateImageThumbnail(dataUrl)
-    await putImage({
+    await browserRuntime.files.write(imagePath(id), dataUrl)
+    if (thumbnail.thumbnailDataUrl) await browserRuntime.files.write(thumbnailPath(id), thumbnail.thumbnailDataUrl)
+    await dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put({
       id,
-      dataUrl,
       createdAt: Date.now(),
       source,
       width: thumbnail.width,
       height: thumbnail.height,
-    })
+    }))
     if (thumbnail.thumbnailDataUrl) {
-      await putImageThumbnail({
+      await dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put({
         id,
-        thumbnailDataUrl: thumbnail.thumbnailDataUrl,
         width: thumbnail.width,
         height: thumbnail.height,
         thumbnailVersion: THUMBNAIL_VERSION,
-      })
+      }))
     }
     return { id, width: thumbnail.width, height: thumbnail.height }
   }
@@ -292,16 +309,16 @@ export async function storeImageWithSize(dataUrl: string, source: NonNullable<St
     const width = thumbnail.width ?? existing.width
     const height = thumbnail.height ?? existing.height
     if (thumbnail.width && thumbnail.height && (existing.width !== thumbnail.width || existing.height !== thumbnail.height)) {
-      await putImage({ ...existing, width: thumbnail.width, height: thumbnail.height })
+      await dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put({ ...existing, dataUrl: undefined, width: thumbnail.width, height: thumbnail.height }))
     }
     if (thumbnail.thumbnailDataUrl) {
-      await putImageThumbnail({
+      await browserRuntime.files.write(thumbnailPath(id), thumbnail.thumbnailDataUrl)
+      await dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put({
         id,
-        thumbnailDataUrl: thumbnail.thumbnailDataUrl,
         width: thumbnail.width,
         height: thumbnail.height,
         thumbnailVersion: THUMBNAIL_VERSION,
-      })
+      }))
     }
     return { id, width, height }
   }
