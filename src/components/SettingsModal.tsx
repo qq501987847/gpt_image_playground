@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
 import { hasActiveDataOperations } from '../lib/dataOperations'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
-import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
+import { useStore, exportData, importData, clearData, deleteAllCloudAssets, type SettingsTab } from '../store'
 import {
   createDefaultOpenAIProfile,
   DEFAULT_FAL_BASE_URL,
@@ -1648,12 +1648,42 @@ export default function SettingsModal() {
             
             {activeTab === 'data' && (
               <div className="space-y-4">
+                <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-500/20 dark:bg-blue-500/5">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">云端临时保存</h4>
+                      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">仅上传生成结果原图和缩略图，固定保留 24 小时</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={draft.cloudBackupEnabled}
+                      aria-label="云端临时保存"
+                      onClick={() => commitSettings({ ...draft, cloudBackupEnabled: !draft.cloudBackupEnabled })}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${draft.cloudBackupEnabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+                    >
+                      <span className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${draft.cloudBackupEnabled ? 'translate-x-5' : ''}`} />
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDialog({
+                      title: '删除全部云端副本',
+                      message: '确定立即删除所有尚未到期的云端临时副本吗？本地图片不会受影响。',
+                      confirmText: '立即删除',
+                      action: () => void deleteAllCloudAssets().then(() => showToast('云端副本已删除', 'success')).catch((error) => showToast(error instanceof Error ? error.message : String(error), 'error')),
+                    })}
+                    className="mt-3 text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400"
+                  >
+                    立即删除全部已有副本
+                  </button>
+                </div>
                 <div className="rounded-2xl bg-gray-50/80 p-4 border border-gray-200/60 dark:bg-white/[0.02] dark:border-white/[0.05] flex items-start gap-3">
                   <svg className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                   <div className="text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
-                    所有的配置、任务和生成的图片均仅保存在您的浏览器本地（除非您使用的服务商存储了它们）。如果您需要清理浏览器站点数据、重置浏览器或使用其他设备，请先导出备份。
+                    浏览器本地保存完整历史；开启云端临时保存时，生成结果会额外保留 24 小时。长期迁移请导出 AWAI 备份 ZIP。
                   </div>
                 </div>
 

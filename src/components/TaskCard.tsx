@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, type ReactNode } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, retryTask } from '../store'
+import { deleteTaskCloudAssets, downloadTaskCloudAsset, retryTask, retryTaskCloudAsset, useStore } from '../store'
 import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
@@ -79,6 +79,7 @@ export default function TaskCard({
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const settings = useStore((s) => s.settings)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
+  const showToast = useStore((s) => s.showToast)
   const streamPreviewSrc = useStore((s) => s.streamPreviews[task.id] || '')
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const swipeResetTimerRef = useRef<number | null>(null)
@@ -322,6 +323,9 @@ export default function TaskCard({
   const outputSuccessCount = task.outputImages?.length ?? 0
   const requestedOutputCount = Math.max(task.params.n, outputSuccessCount + outputErrorCount)
   const hasPartialOutputFailure = task.status === 'done' && outputErrorCount > 0
+  const availableCloudCopy = task.cloudCopies?.find((copy) => copy.status === 'available')
+  const failedCloudCopy = task.cloudCopies?.find((copy) => copy.status === 'local-only')
+  const cloudUploading = task.cloudCopies?.some((copy) => copy.status === 'uploading')
 
   const defaultModelForProvider = DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
@@ -605,6 +609,13 @@ export default function TaskCard({
                   透明背景
                 </span>
               )}
+              {availableCloudCopy?.expiresAt && (
+                <span className="flex-shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" title={`云端副本到期：${new Date(availableCloudCopy.expiresAt).toLocaleString('zh-CN', { hour12: false })}`}>
+                  云端至 {new Date(availableCloudCopy.expiresAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
+                </span>
+              )}
+              {cloudUploading && <span className="flex-shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">上传中</span>}
+              {failedCloudCopy && <span className="flex-shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-400" title={failedCloudCopy.error}>仅本地保存</span>}
               {/* Params: only show if not default or mismatch */}
               {showQuality && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
@@ -641,6 +652,33 @@ export default function TaskCard({
               onTouchEnd={(e) => e.stopPropagation()}
               onTouchCancel={(e) => e.stopPropagation()}
             >
+              {failedCloudCopy && (
+                <TaskActionButton
+                  tooltip="重新上传云端副本"
+                  onClick={() => void retryTaskCloudAsset(task.id, failedCloudCopy.imageId)}
+                  className="p-1.5 rounded-md text-amber-500 transition hover:bg-amber-50 dark:hover:bg-amber-500/10"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M5.5 18.5a8 8 0 0012-1.5M18.5 5.5A8 8 0 006.5 7" /></svg>
+                </TaskActionButton>
+              )}
+              {availableCloudCopy && (
+                <>
+                  <TaskActionButton
+                    tooltip="下载云端副本"
+                    onClick={() => void downloadTaskCloudAsset(task.id).catch((error) => showToast(error instanceof Error ? error.message : String(error), 'error'))}
+                    className="p-1.5 rounded-md text-emerald-600 transition hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>
+                  </TaskActionButton>
+                  <TaskActionButton
+                    tooltip="删除云端副本"
+                    onClick={() => void deleteTaskCloudAssets(task.id).catch((error) => showToast(error instanceof Error ? error.message : String(error), 'error'))}
+                    className="p-1.5 rounded-md text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 7h12m-8 4v6m4-6v6M9 7l1-3h4l1 3m-8 0l1 14h8l1-14" /></svg>
+                  </TaskActionButton>
+                </>
+              )}
               {((task.status === 'error' && !isFalReconnecting) || settings.alwaysShowRetryButton) && (
                 <TaskActionButton
                   tooltip="重试任务"

@@ -8,6 +8,7 @@ import { getDataUrlDecodedByteSize } from './imageApiShared'
 type ZipFiles = Record<string, Uint8Array | [Uint8Array, { mtime: Date; level?: 0 }]>
 
 export const MAX_EXPORT_ZIP_BYTES = 2 * 1024 * 1024 * 1024
+export const CURRENT_BACKUP_VERSION = 3
 const DEFAULT_EXPORT_PART_BYTES = 256 * 1024 * 1024
 const EXPORT_PART_SAFETY_BYTES = 128 * 1024 * 1024
 const ZIP_BASE_OVERHEAD_BYTES = 1024 * 1024
@@ -93,12 +94,18 @@ export async function buildExportZip(params: BuildExportZipParams) {
   }
 
   const manifest: ExportData = {
-    version: 3,
+    version: CURRENT_BACKUP_VERSION,
     exportedAt: exportedAtDate.toISOString(),
   }
 
   if (params.backupPart) manifest.backupPart = params.backupPart
-  if (params.options.exportConfig && params.includeManifestData !== false) manifest.settings = params.settings
+  if (params.options.exportConfig && params.includeManifestData !== false) {
+    manifest.settings = {
+      ...params.settings,
+      apiKey: '',
+      profiles: params.settings.profiles.map((profile) => ({ ...profile, apiKey: '' })),
+    }
+  }
   if (params.options.exportTasks) {
     if (params.includeManifestData !== false || params.tasks.length) manifest.tasks = params.tasks
     if (params.includeManifestData !== false || params.agentConversations.length) manifest.agentConversations = params.agentConversations
@@ -201,6 +208,7 @@ export async function readExportZipManifest(bytes: Uint8Array, validateFiles = t
   const manifestBytes = files['manifest.json']
   if (!manifestBytes) throw new Error('ZIP 中缺少 manifest.json')
   const manifest = JSON.parse(strFromU8(manifestBytes)) as ExportData
+  assertExportManifest(manifest)
   if (validateFiles) assertExportZipFiles(manifest, (path) => entryNames.has(path))
   return manifest
 }
@@ -210,6 +218,7 @@ export async function readExportZip(bytes: Uint8Array): Promise<ExportZipContent
   const manifestBytes = files['manifest.json']
   if (!manifestBytes) throw new Error('ZIP 中缺少 manifest.json')
   const manifest = JSON.parse(strFromU8(manifestBytes)) as ExportData
+  assertExportManifest(manifest)
   assertExportZipFiles(manifest, (path) => files[path] != null)
 
   return {
@@ -239,9 +248,23 @@ function assertExportZipFiles(manifest: ExportData, hasFile: (path: string) => b
   if (missingPath) throw new Error(`ZIP 中缺少 ${missingPath}`)
 }
 
+function assertExportManifest(manifest: ExportData) {
+  if (!manifest || typeof manifest !== 'object') throw new Error('备份清单无效')
+  if (manifest.version !== 2 && manifest.version !== CURRENT_BACKUP_VERSION) {
+    throw new Error(`不支持的备份版本：${String(manifest.version)}`)
+  }
+  if (typeof manifest.exportedAt !== 'string' || !Number.isFinite(Date.parse(manifest.exportedAt))) throw new Error('备份导出时间无效')
+  const paths = [
+    ...Object.values(manifest.imageFiles ?? {}).map((file) => file.path),
+    ...Object.values(manifest.thumbnailFiles ?? {}).map((file) => file.path),
+  ]
+  if (new Set(paths).size !== paths.length) throw new Error('备份包含重复文件路径')
+  if (paths.some((path) => !/^(images|thumbnails)\/[A-Za-z0-9._-]+$/.test(path))) throw new Error('备份包含无效文件路径')
+}
+
 function getBaseManifestEstimatedBytes(params: Omit<BuildExportZipParams, 'images' | 'thumbnailsByImageId'>) {
   const manifest = {
-    version: 3,
+    version: CURRENT_BACKUP_VERSION,
     exportedAt: new Date(params.exportedAt).toISOString(),
     ...(params.options.exportConfig ? { settings: params.settings } : {}),
     ...(params.options.exportTasks ? {

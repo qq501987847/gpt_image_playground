@@ -19,6 +19,7 @@ import ImageContextMenu from './components/ImageContextMenu'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { hydrateSub2ApiProfiles, initializeSub2ApiSession, useSub2ApiSession } from './lib/sub2apiSession'
+import CloudBackupDisclosure from './components/CloudBackupDisclosure'
 
 export default function App() {
   const sub2api = useSub2ApiSession()
@@ -103,6 +104,7 @@ export default function App() {
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />
+      <CloudBackupDisclosure />
     </>
   )
 }

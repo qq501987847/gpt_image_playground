@@ -609,6 +609,8 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     agentImageProfileId,
     profiles,
     activeProfileId,
+    cloudBackupEnabled: typeof record.cloudBackupEnabled === 'boolean' ? record.cloudBackupEnabled : true,
+    cloudDisclosureSeen: typeof record.cloudDisclosureSeen === 'boolean' ? record.cloudDisclosureSeen : false,
   }
 }
 
@@ -920,4 +922,6 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   agentApiConfigMode: 'off',
   agentTextProfileId: null,
   agentImageProfileId: null,
+  cloudBackupEnabled: true,
+  cloudDisclosureSeen: false,
 })

@@ -61,6 +61,7 @@ import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, delete
 import { hasActiveDataOperations } from './lib/dataOperations'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, createExportBlob, getExportImageEstimatedBytes, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
+import { createBackupImportPlan } from './lib/backupImport'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentRoundPath, normalizeAgentConversations, remapAgentRoundMentionsForPathChange, uniqueIds } from './lib/agentConversationState'
 import { canonicalizeBatchFunctionCallArguments, countResponseToolCalls, createReadyAgentRecoveredToolState, getAgentFunctionOutputCallIds, getAgentRecoveredFailureError, getAgentRecoveredToolCallCount, getPersistableAgentConversations, getPersistableRawResponsePayload, mergeResponseOutputItems, scrubResponseOutputForDeletedAgentTasks, scrubTaskRawResponsePayloadForDeletedTasks } from './lib/agentResponseState'
 import { cleanStaleAgentInputDrafts, clearInputDraftState, isEmptyAgentInputDraft, normalizeAgentInputDrafts, remapAgentInputDraftMentionsForPathChange, restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveAgentInputDrafts, saveGalleryInputDraft, syncActiveInputDraft, updateInputDraftImages } from './lib/inputDraftState'
@@ -69,6 +70,7 @@ import { createPersistedState, mergePersistedAgentConversations, migratePersiste
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
 import { browserRuntime, hasLowBrowserStorage } from './lib/runtime'
+import { deleteCloudAsset, getCloudAssetDownload, isCloudAssetsConfigured, uploadCloudAsset } from './lib/cloudAssets'
 
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
@@ -3261,6 +3263,7 @@ async function executeAgentRound(
         useStore.getState().setTasks([task, ...useStore.getState().tasks])
         attachTaskToAgentRound(task.id)
         await putTask(task)
+        void backupTaskCloudOutputs(task)
       }
 
       if (result.rawResponsePayload && streamingTaskIds.length > 0) {
@@ -3770,6 +3773,64 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   setTasks(updated)
   maybeOpenSupportPrompt(tasks, updated, taskId)
   if (task) putTask(task)
+  const previous = tasks.find((item) => item.id === taskId)
+  if (task && previous?.status !== 'done' && task.status === 'done' && task.outputImages.length > 0) {
+    void backupTaskCloudOutputs(task)
+  }
+}
+
+function updateTaskCloudCopy(taskId: string, copy: NonNullable<TaskRecord['cloudCopies']>[number]) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task) return
+  const copies = [...(task.cloudCopies ?? [])]
+  const index = copies.findIndex((item) => item.imageId === copy.imageId)
+  if (index >= 0) copies[index] = copy
+  else copies.push(copy)
+  updateTaskInStore(taskId, { cloudCopies: copies })
+}
+
+async function backupTaskCloudOutputs(task: TaskRecord, onlyImageId?: string) {
+  const settings = useStore.getState().settings
+  if (!settings.cloudBackupEnabled || !isCloudAssetsConfigured()) return
+  const imageIds = onlyImageId ? [onlyImageId] : task.outputImages
+  for (const imageId of imageIds) {
+    updateTaskCloudCopy(task.id, { imageId, status: 'uploading' })
+    const [dataUrl, thumbnail] = await Promise.all([ensureImageCached(imageId), getImageThumbnail(imageId)])
+    if (!dataUrl) {
+      updateTaskCloudCopy(task.id, { imageId, status: 'local-only', error: '本地原图不可用，无法上传' })
+      continue
+    }
+    updateTaskCloudCopy(task.id, await uploadCloudAsset(task.id, imageId, dataUrl, thumbnail?.thumbnailDataUrl))
+  }
+}
+
+export async function retryTaskCloudAsset(taskId: string, imageId: string) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task) return
+  await backupTaskCloudOutputs(task, imageId)
+}
+
+export async function deleteTaskCloudAssets(taskId: string) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task) return
+  const copies = task.cloudCopies ?? []
+  for (const copy of copies) {
+    if (copy.id) await deleteCloudAsset(copy.id)
+  }
+  updateTaskInStore(taskId, { cloudCopies: [] })
+}
+
+export async function deleteAllCloudAssets() {
+  const taskIds = useStore.getState().tasks.filter((task) => task.cloudCopies?.some((copy) => copy.id)).map((task) => task.id)
+  for (const taskId of taskIds) await deleteTaskCloudAssets(taskId)
+}
+
+export async function downloadTaskCloudAsset(taskId: string) {
+  const copy = useStore.getState().tasks.find((item) => item.id === taskId)?.cloudCopies?.find((item) => item.status === 'available' && item.id)
+  if (!copy?.id) return
+  const url = await getCloudAssetDownload(copy.id)
+  if (!url) throw new Error('云端副本下载地址不可用')
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 export function createFavoriteCollection(name: string) {
@@ -4444,16 +4505,29 @@ export async function importData(input: File | File[], options: ImportOptions = 
       selected.sort((a, b) => a.manifest.backupPart!.index - b.manifest.backupPart!.index)
     }
 
-    const settingsManifests = selected.filter((part) => part.manifest.settings)
+    const unpacked = [] as Array<Awaited<ReturnType<typeof readExportZip>>>
+    if (options.importTasks) {
+      for (const part of selected) unpacked.push(await readExportZip(new Uint8Array(await part.file.arrayBuffer())))
+    }
+    const currentTasks = await getAllTasks()
+    const currentImageIds = await getAllImageIds()
+    const plan = createBackupImportPlan(selected.map((part) => part.manifest), {
+      tasks: currentTasks.map((task) => task.id),
+      images: currentImageIds,
+      collections: state.favoriteCollections.map((collection) => collection.id),
+      conversations: state.agentConversations,
+    })
+    const settingsManifests = plan.manifests.filter((manifest) => manifest.settings)
     if (options.importConfig && !options.importTasks && !settingsManifests.length) throw new Error('所选备份不包含配置数据。')
-    const importedTasks = selected.flatMap((part) => part.manifest.tasks ?? [])
-    const importedAgentConversations = selected.flatMap((part) => part.manifest.agentConversations ?? [])
-    const hasTaskData = selected.some((part) => part.manifest.tasks != null || part.manifest.imageFiles != null)
+    const importedTasks = plan.tasks
+    const importedAgentConversations = plan.conversations
+    const hasTaskData = plan.manifests.some((manifest) => manifest.tasks != null || manifest.imageFiles != null)
 
     const importedImageIds: string[] = []
     if (options.importTasks && hasTaskData) {
-      for (const part of selected) {
-        const { manifest, files: zipFiles } = await readExportZip(new Uint8Array(await part.file.arrayBuffer()))
+      for (let index = 0; index < plan.manifests.length; index++) {
+        const manifest = plan.manifests[index]
+        const zipFiles = unpacked[index].files
         for (const [id, info] of Object.entries(manifest.imageFiles ?? {})) {
           const dataUrl = readExportZipFileAsDataUrl(zipFiles, info.path)
           if (!dataUrl) continue
@@ -4494,12 +4568,12 @@ export async function importData(input: File | File[], options: ImportOptions = 
 
       const tasks = await getAllTasks()
       const state = useStore.getState()
-      const importedFavoriteCollections = selected.flatMap((part) => part.manifest.favoriteCollections ?? [])
+      const importedFavoriteCollections = plan.collections
       const mergedFavorites = mergeFavoriteCollections(state.favoriteCollections, importedFavoriteCollections)
       const favoriteCollections = mergedFavorites.collections
-      const importedDefaultFavoriteCollectionId = selected
-        .map((part) => part.manifest.defaultFavoriteCollectionId)
-        .find((id) => id != null && favoriteCollections.some((collection) => collection.id === id))
+      const importedDefaultFavoriteCollectionId = plan.defaultCollectionId != null && favoriteCollections.some((collection) => collection.id === plan.defaultCollectionId)
+        ? plan.defaultCollectionId
+        : undefined
       const defaultFavoriteCollectionId = mergedFavorites.importedCollections.length
         ? resolveDefaultFavoriteCollectionId(favoriteCollections, importedDefaultFavoriteCollectionId)
         : state.defaultFavoriteCollectionId
@@ -4530,7 +4604,7 @@ export async function importData(input: File | File[], options: ImportOptions = 
     if (options.importConfig && settingsManifests.length) {
       const state = useStore.getState()
       const settings = settingsManifests.reduce(
-        (current, part) => mergeImportedSettings(current, part.manifest.settings),
+        (current, manifest) => mergeImportedSettings(current, manifest.settings),
         state.settings,
       )
       state.setSettings(settings)

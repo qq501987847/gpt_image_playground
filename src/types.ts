@@ -117,6 +117,8 @@ export interface AppSettings {
   agentImageProfileId?: string | null
   profiles: ApiProfile[]
   activeProfileId: string
+  cloudBackupEnabled: boolean
+  cloudDisclosureSeen: boolean
 }
 
 // ===== 任务参数 =====
@@ -250,6 +252,15 @@ export interface TaskRecord {
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
   /** OPFS 写入失败后仅在当前页面保留的输出 */
   unsavedOutputImageIds?: string[]
+  cloudCopies?: CloudAssetCopy[]
+}
+
+export interface CloudAssetCopy {
+  id?: string
+  imageId: string
+  status: 'uploading' | 'available' | 'local-only'
+  expiresAt?: string
+  error?: string
 }
 
 export interface FavoriteCollection {

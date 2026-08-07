@@ -2086,6 +2086,36 @@ describe('data import', () => {
     await clearAgentConversations()
   })
 
+  it('keeps local records and remaps every imported reference when IDs collide', async () => {
+    await clearTasks()
+    await clearImages()
+    const localTask = task({ id: 'collision-task', prompt: '本地记录', outputImages: ['collision-image'] })
+    await putDbTask(localTask)
+    await putImage({ id: 'collision-image', dataUrl: 'data:image/png;base64,AQ==', source: 'generated' })
+    useStore.setState({ tasks: [localTask] })
+
+    const imported = await importData(importFile({
+      version: 3,
+      exportedAt: new Date(0).toISOString(),
+      tasks: [task({ id: 'collision-task', prompt: '导入记录', outputImages: ['collision-image'] })],
+      favoriteCollections: [],
+      agentConversations: [],
+      imageFiles: { 'collision-image': { path: 'images/collision.png', source: 'generated' } },
+    }, { 'images/collision.png': new Uint8Array([2]) }), { importConfig: false, importTasks: true })
+
+    const tasks = await getAllTasks()
+    expect(imported).toBe(true)
+    expect(tasks.find((item) => item.id === 'collision-task')?.prompt).toBe('本地记录')
+    expect(tasks.find((item) => item.id === 'collision-task-imported')).toMatchObject({
+      prompt: '导入记录',
+      outputImages: ['collision-image-imported'],
+    })
+    expect(await getImage('collision-image')).toMatchObject({ dataUrl: 'data:image/png;base64,AQ==' })
+    expect(await getImage('collision-image-imported')).toMatchObject({ dataUrl: 'data:image/png;base64,Ag==' })
+    await clearTasks()
+    await clearImages()
+  })
+
   it('restores favorite collections and default collection when importing task data', async () => {
     await clearTasks()
     const importedCollections = [

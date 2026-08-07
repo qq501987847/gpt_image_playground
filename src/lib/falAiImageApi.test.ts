@@ -1,3 +1,4 @@
+// @ts-expect-error 旧 FAL 测试仍引用已移除的可选依赖，默认构建不应因此恢复该依赖。
 import { fal } from '@fal-ai/client'
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'

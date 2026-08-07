@@ -42,7 +42,7 @@ describe('exportZip', () => {
     const { manifest, bytes } = await buildExportZip({
       options: { exportConfig: true, exportTasks: true },
       exportedAt: 1700000001000,
-      settings: {} as AppSettings,
+      settings: { apiKey: 'top-secret', profiles: [{ apiKey: 'profile-secret' }] } as AppSettings,
       tasks: [task],
       images,
       thumbnailsByImageId: new Map([[thumbnail.id, thumbnail]]),
@@ -54,6 +54,8 @@ describe('exportZip', () => {
 
     expect(parsed.manifest).toEqual(manifest)
     expect(parsed.manifest.version).toBe(3)
+    expect(JSON.stringify(parsed.manifest)).not.toContain('top-secret')
+    expect(JSON.stringify(parsed.manifest)).not.toContain('profile-secret')
     expect(parsed.manifest.exportedAt).toBe(new Date(1700000001000).toISOString())
     expect(parsed.manifest.imageFiles?.['img-1']).toEqual({
       path: 'images/task-task-1-input.png',
@@ -96,7 +98,7 @@ describe('exportZip', () => {
     const params = {
       options: { exportConfig: true, exportTasks: true },
       exportedAt: 1700000001000,
-      settings: {} as AppSettings,
+      settings: { apiKey: '', profiles: [] } as unknown as AppSettings,
       tasks: [task],
       images,
       thumbnailsByImageId: new Map(),
@@ -150,7 +152,7 @@ describe('exportZip', () => {
     const params = {
       options: { exportConfig: true, exportTasks: true },
       exportedAt: 1700000001000,
-      settings: {} as AppSettings,
+      settings: { apiKey: '', profiles: [] } as unknown as AppSettings,
       tasks,
       images: [],
       thumbnailsByImageId: new Map(),
