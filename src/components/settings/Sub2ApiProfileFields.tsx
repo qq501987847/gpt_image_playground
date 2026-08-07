@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { ApiProfile } from '../../types'
-import { bindSub2ApiProfile, discoverProfileModels, useSub2ApiSession } from '../../lib/sub2apiSession'
+import { addDesktopCredential, bindSub2ApiProfile, discoverProfileModels, useSub2ApiSession } from '../../lib/sub2apiSession'
 import { isSub2ApiKeyUsable } from '../../lib/sub2api'
+import { isDesktopRuntime } from '../../lib/runtime'
 
 export default function Sub2ApiProfileFields({ profile, onChange }: { profile: ApiProfile, onChange: (profile: ApiProfile) => void }) {
   const session = useSub2ApiSession()
   const [models, setModels] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [credentialLabel, setCredentialLabel] = useState('')
+  const [credentialValue, setCredentialValue] = useState('')
 
   useEffect(() => {
     setModels([])
@@ -19,13 +22,13 @@ export default function Sub2ApiProfileFields({ profile, onChange }: { profile: A
   return (
     <>
       <label className="block">
-        <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">计费 Key</span>
+        <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">{isDesktopRuntime ? '系统凭据' : '计费 Key'}</span>
         <select
           value={profile.keyId ?? ''}
           onChange={(event) => void bindSub2ApiProfile(profile, event.target.value || null).then(onChange)}
           className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
         >
-          <option value="">请选择 Key</option>
+          <option value="">{isDesktopRuntime ? '请选择凭据' : '请选择 Key'}</option>
           {session.keys.map((key) => {
             const usable = isSub2ApiKeyUsable(key)
             return (
@@ -36,6 +39,45 @@ export default function Sub2ApiProfileFields({ profile, onChange }: { profile: A
           })}
         </select>
       </label>
+      {isDesktopRuntime && profile.credentialRebindRequired && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">该配置的系统凭据缺失，需要重新绑定。</p>
+      )}
+      {isDesktopRuntime && (
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <input
+            value={credentialLabel}
+            onChange={(event) => setCredentialLabel(event.target.value)}
+            placeholder="凭据名称"
+            className="min-w-0 rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm dark:border-white/[0.08] dark:bg-white/[0.03]"
+          />
+          <input
+            type="password"
+            value={credentialValue}
+            onChange={(event) => setCredentialValue(event.target.value)}
+            placeholder="粘贴 Sub2API Key"
+            autoComplete="off"
+            className="min-w-0 rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm dark:border-white/[0.08] dark:bg-white/[0.03]"
+          />
+          <button
+            type="button"
+            disabled={!credentialLabel.trim() || !credentialValue.trim() || loading}
+            onClick={() => {
+              setLoading(true)
+              setError(null)
+              void addDesktopCredential(credentialLabel.trim(), credentialValue.trim())
+                .then(() => {
+                  setCredentialLabel('')
+                  setCredentialValue('')
+                })
+                .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                .finally(() => setLoading(false))
+            }}
+            className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            保存
+          </button>
+        </div>
+      )}
       <div className="block">
         <div className="mb-1.5 flex items-center justify-between gap-3">
           <span className="text-sm text-gray-600 dark:text-gray-300">模型</span>

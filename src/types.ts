@@ -84,6 +84,7 @@ export interface ApiProfile {
   streamImages?: boolean
   streamPartialImages?: number
   keyId?: string | null
+  credentialRebindRequired?: boolean
   providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'reasoningEffort' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages'>>>>
 }
 

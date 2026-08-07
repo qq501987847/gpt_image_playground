@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AWAI创作工作台",
+  "version": "0.1.0",
+  "identifier": "com.awai.creative-workbench",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AWAI创作工作台",
+        "width": 1180,
+        "height": 800,
+        "minWidth": 390,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [],
+    "licenseFile": "../LICENSE",
+    "targets": "all"
+  }
+}

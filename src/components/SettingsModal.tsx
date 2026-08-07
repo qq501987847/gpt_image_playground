@@ -47,6 +47,7 @@ import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/Pro
 import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/ZipDownloadRouteModal'
 import Sub2ApiProfileFields from './settings/Sub2ApiProfileFields'
 import { useSub2ApiSession } from '../lib/sub2apiSession'
+import { isDesktopRuntime } from '../lib/runtime'
 
 function newId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
@@ -1809,7 +1810,7 @@ export default function SettingsModal() {
               <div className="flex h-full min-h-[300px] flex-col items-center justify-center pb-8 px-6">
                 <h4 className="text-[17px] font-bold text-gray-800 dark:text-gray-100">AWAI创作工作台</h4>
                 <p className="mt-3 text-[13px] text-gray-500 dark:text-gray-400">版本 {__APP_VERSION__}</p>
-                <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400">运行模式：在线版</p>
+                <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400">运行模式：{isDesktopRuntime ? '桌面版' : '在线版'}</p>
                 {AWAI_SUPPORT_URL && (
                   <a href={AWAI_SUPPORT_URL} target="_blank" rel="noopener noreferrer" className="mt-6 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
                     官方支持

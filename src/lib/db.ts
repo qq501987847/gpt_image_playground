@@ -1,5 +1,5 @@
 import type { AgentConversation, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
-import { browserRuntime, openAwaiDatabase } from './runtime'
+import { appRuntime, invokeDesktop, isDesktopRuntime, openAwaiDatabase } from './runtime'
 
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
@@ -26,6 +26,18 @@ function openDB(): Promise<IDBDatabase> {
   return openAwaiDatabase()
 }
 
+function desktopRecord<T>(collection: string, id: string) {
+  return invokeDesktop<string | null>('record_get', { collection, id }).then((value) => value ? JSON.parse(value) as T : undefined)
+}
+
+function desktopRecords<T>(collection: string) {
+  return invokeDesktop<string[]>('record_list', { collection }).then((values) => values.map((value) => JSON.parse(value) as T))
+}
+
+function putDesktopRecord(collection: string, id: string, value: unknown) {
+  return invokeDesktop<string>('record_put', { collection, id, value: JSON.stringify(value) })
+}
+
 function dbTransaction<T>(
   storeName: string,
   mode: IDBTransactionMode,
@@ -46,18 +58,26 @@ function dbTransaction<T>(
 // ===== Tasks =====
 
 export function getAllTasks(): Promise<TaskRecord[]> {
+  if (isDesktopRuntime) return desktopRecords(STORE_TASKS)
   return dbTransaction(STORE_TASKS, 'readonly', (s) => s.getAll())
 }
 
 export function putTask(task: TaskRecord): Promise<IDBValidKey> {
+  if (isDesktopRuntime) return putDesktopRecord(STORE_TASKS, task.id, task)
   return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.put(task))
 }
 
 export function deleteTask(id: string): Promise<undefined> {
+  if (isDesktopRuntime) return invokeDesktop('record_delete', { collection: STORE_TASKS, id })
   return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.delete(id))
 }
 
 export function commitTaskDeletion(deletedTaskIds: string[], updatedTasks: TaskRecord[], updatedConversations: AgentConversation[]): Promise<undefined> {
+  if (isDesktopRuntime) return invokeDesktop('records_commit_task_deletion', {
+    deletedTaskIds,
+    updatedTasks: updatedTasks.map((task) => JSON.stringify(task)),
+    updatedConversations: updatedConversations.map((conversation) => JSON.stringify(conversation)),
+  })
   return openDB().then(
     (db) =>
       new Promise((resolve, reject) => {
@@ -75,24 +95,32 @@ export function commitTaskDeletion(deletedTaskIds: string[], updatedTasks: TaskR
 }
 
 export function clearTasks(): Promise<undefined> {
+  if (isDesktopRuntime) return invokeDesktop('records_clear', { collection: STORE_TASKS })
   return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.clear())
 }
 
 // ===== Agent conversations =====
 
 export function getAllAgentConversations(): Promise<AgentConversation[]> {
+  if (isDesktopRuntime) return desktopRecords(STORE_AGENT_CONVERSATIONS)
   return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readonly', (s) => s.getAll())
 }
 
 export function putAgentConversation(conversation: AgentConversation): Promise<IDBValidKey> {
+  if (isDesktopRuntime) return putDesktopRecord(STORE_AGENT_CONVERSATIONS, conversation.id, conversation)
   return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readwrite', (s) => s.put(conversation))
 }
 
 export function clearAgentConversations(): Promise<undefined> {
+  if (isDesktopRuntime) return invokeDesktop('records_clear', { collection: STORE_AGENT_CONVERSATIONS })
   return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readwrite', (s) => s.clear())
 }
 
 export function replaceAgentConversations(conversations: AgentConversation[]): Promise<undefined> {
+  if (isDesktopRuntime) return invokeDesktop('records_replace', {
+    collection: STORE_AGENT_CONVERSATIONS,
+    records: conversations.map((conversation) => JSON.stringify(conversation)),
+  })
   return openDB().then(
     (db) =>
       new Promise((resolve, reject) => {
@@ -110,17 +138,27 @@ export function replaceAgentConversations(conversations: AgentConversation[]): P
 // ===== Images =====
 
 export function getImage(id: string): Promise<StoredImage | undefined> {
+  if (isDesktopRuntime) return desktopRecord<StoredImageIndex>(STORE_IMAGES, id).then(async (index) => {
+    if (!index) return undefined
+    const dataUrl = await appRuntime.files.read(imagePath(id))
+    return dataUrl ? { ...index, dataUrl } : undefined
+  })
   return dbTransaction<StoredImageIndex | undefined>(STORE_IMAGES, 'readonly', (s) => s.get(id)).then(async (index) => {
     if (!index) return undefined
-    const dataUrl = await browserRuntime.files.read(imagePath(id))
+    const dataUrl = await appRuntime.files.read(imagePath(id))
     return dataUrl ? { ...index, dataUrl } : undefined
   })
 }
 
 export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
+  if (isDesktopRuntime) return desktopRecord<StoredThumbnailIndex>(STORE_THUMBNAILS, id).then(async (index) => {
+    if (!index) return undefined
+    const thumbnailDataUrl = await appRuntime.files.read(thumbnailPath(id))
+    return thumbnailDataUrl ? { ...index, thumbnailDataUrl } : undefined
+  })
   return dbTransaction<StoredThumbnailIndex | undefined>(STORE_THUMBNAILS, 'readonly', (s) => s.get(id)).then(async (index) => {
     if (!index) return undefined
-    const thumbnailDataUrl = await browserRuntime.files.read(thumbnailPath(id))
+    const thumbnailDataUrl = await appRuntime.files.read(thumbnailPath(id))
     return thumbnailDataUrl ? { ...index, thumbnailDataUrl } : undefined
   })
 }
@@ -132,8 +170,10 @@ export async function getStoredFreshImageThumbnail(id: string): Promise<StoredIm
 
 export function putImageThumbnail(thumbnail: StoredImageThumbnail): Promise<IDBValidKey> {
   const { thumbnailDataUrl, ...index } = thumbnail
-  return browserRuntime.files.write(thumbnailPath(thumbnail.id), thumbnailDataUrl).then(() =>
-    dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(index)),
+  return appRuntime.files.write(thumbnailPath(thumbnail.id), thumbnailDataUrl).then(() =>
+    isDesktopRuntime
+      ? putDesktopRecord(STORE_THUMBNAILS, thumbnail.id, index)
+      : dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(index)),
   )
 }
 
@@ -182,9 +222,16 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
 }
 
 export function getAllImages(): Promise<StoredImage[]> {
+  if (isDesktopRuntime) return desktopRecords<StoredImageIndex>(STORE_IMAGES).then(async (indexes) => {
+    const images = await Promise.all(indexes.map(async (index) => {
+      const dataUrl = await appRuntime.files.read(imagePath(index.id))
+      return dataUrl ? { ...index, dataUrl } : null
+    }))
+    return images.filter((image): image is StoredImage => image !== null)
+  })
   return dbTransaction<StoredImageIndex[]>(STORE_IMAGES, 'readonly', (s) => s.getAll()).then(async (indexes) => {
     const images = await Promise.all(indexes.map(async (index) => {
-      const dataUrl = await browserRuntime.files.read(imagePath(index.id))
+      const dataUrl = await appRuntime.files.read(imagePath(index.id))
       return dataUrl ? { ...index, dataUrl } : null
     }))
     return images.filter((image): image is StoredImage => image !== null)
@@ -192,6 +239,7 @@ export function getAllImages(): Promise<StoredImage[]> {
 }
 
 export function getAllImageIds(): Promise<string[]> {
+  if (isDesktopRuntime) return invokeDesktop('record_ids', { collection: STORE_IMAGES })
   return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAllKeys()).then((keys) =>
     keys.map(String),
   )
@@ -199,12 +247,19 @@ export function getAllImageIds(): Promise<string[]> {
 
 export function putImage(image: StoredImage): Promise<IDBValidKey> {
   const { dataUrl, ...index } = image
-  return browserRuntime.files.write(imagePath(image.id), dataUrl).then(() =>
+  if (isDesktopRuntime) return invokeDesktop<string>('image_put', {
+    id: image.id,
+    dataUrl,
+    metadata: JSON.stringify(index),
+    source: image.source ?? 'upload',
+  })
+  return appRuntime.files.write(imagePath(image.id), dataUrl).then(() =>
     dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put(index)),
   )
 }
 
 export function deleteImage(id: string): Promise<undefined> {
+  if (isDesktopRuntime) return invokeDesktop('image_delete', { id })
   return openDB().then(
     (db) =>
       new Promise((resolve, reject) => {
@@ -215,12 +270,13 @@ export function deleteImage(id: string): Promise<undefined> {
         tx.onerror = () => reject(tx.error)
       }),
   ).then(async () => {
-    await Promise.all([browserRuntime.files.remove(imagePath(id)), browserRuntime.files.remove(thumbnailPath(id))])
+    await Promise.all([appRuntime.files.remove(imagePath(id)), appRuntime.files.remove(thumbnailPath(id))])
     return undefined
   })
 }
 
 export function clearImages(): Promise<undefined> {
+  if (isDesktopRuntime) return invokeDesktop('images_clear')
   return openDB().then(
     (db) =>
       new Promise((resolve, reject) => {
@@ -231,7 +287,7 @@ export function clearImages(): Promise<undefined> {
         tx.onerror = () => reject(tx.error)
       }),
   ).then(async () => {
-    await browserRuntime.files.clear()
+    await appRuntime.files.clear()
     return undefined
   })
 }
@@ -284,22 +340,28 @@ export async function storeImageWithSize(dataUrl: string, source: NonNullable<St
   const existing = await getImage(id)
   if (!existing) {
     const thumbnail = await safeCreateImageThumbnail(dataUrl)
-    await browserRuntime.files.write(imagePath(id), dataUrl)
-    if (thumbnail.thumbnailDataUrl) await browserRuntime.files.write(thumbnailPath(id), thumbnail.thumbnailDataUrl)
-    await dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put({
+    const index = {
       id,
       createdAt: Date.now(),
       source,
       width: thumbnail.width,
       height: thumbnail.height,
-    }))
+    }
+    if (isDesktopRuntime) await invokeDesktop('image_put', { id, dataUrl, metadata: JSON.stringify(index), source })
+    else {
+      await appRuntime.files.write(imagePath(id), dataUrl)
+      await dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put(index))
+    }
+    if (thumbnail.thumbnailDataUrl) await appRuntime.files.write(thumbnailPath(id), thumbnail.thumbnailDataUrl)
     if (thumbnail.thumbnailDataUrl) {
-      await dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put({
+      const index = {
         id,
         width: thumbnail.width,
         height: thumbnail.height,
         thumbnailVersion: THUMBNAIL_VERSION,
-      }))
+      }
+      if (isDesktopRuntime) await putDesktopRecord(STORE_THUMBNAILS, id, index)
+      else await dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(index))
     }
     return { id, width: thumbnail.width, height: thumbnail.height }
   }
@@ -309,16 +371,18 @@ export async function storeImageWithSize(dataUrl: string, source: NonNullable<St
     const width = thumbnail.width ?? existing.width
     const height = thumbnail.height ?? existing.height
     if (thumbnail.width && thumbnail.height && (existing.width !== thumbnail.width || existing.height !== thumbnail.height)) {
-      await dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put({ ...existing, dataUrl: undefined, width: thumbnail.width, height: thumbnail.height }))
+      await putImage({ ...existing, width: thumbnail.width, height: thumbnail.height })
     }
     if (thumbnail.thumbnailDataUrl) {
-      await browserRuntime.files.write(thumbnailPath(id), thumbnail.thumbnailDataUrl)
-      await dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put({
+      await appRuntime.files.write(thumbnailPath(id), thumbnail.thumbnailDataUrl)
+      const index = {
         id,
         width: thumbnail.width,
         height: thumbnail.height,
         thumbnailVersion: THUMBNAIL_VERSION,
-      }))
+      }
+      if (isDesktopRuntime) await putDesktopRecord(STORE_THUMBNAILS, id, index)
+      else await dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(index))
     }
     return { id, width, height }
   }

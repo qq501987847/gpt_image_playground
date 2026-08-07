@@ -1,4 +1,6 @@
 import { blobToDataUrl } from './dataUrl'
+import { invoke } from '@tauri-apps/api/core'
+import { save } from '@tauri-apps/plugin-dialog'
 
 export const AWAI_DB_NAME = 'awai-creative-workbench'
 export const AWAI_DB_VERSION = 1
@@ -6,7 +8,7 @@ export const AWAI_DB_VERSION = 1
 const STORE_NAMES = ['tasks', 'images', 'thumbnails', 'agentConversations', 'settings']
 const memoryMetadata = new Map<string, string>()
 
-export type RuntimeMode = 'online'
+export type RuntimeMode = 'online' | 'desktop'
 
 export interface RuntimeContract {
   mode: RuntimeMode
@@ -30,6 +32,38 @@ export interface RuntimeContract {
   }
   downloads: {
     save: (blob: Blob, name: string) => Promise<void>
+  }
+}
+
+export interface DesktopLibraryStatus {
+  initialized: boolean
+  path: string | null
+  suggestedPath: string
+}
+
+export interface DesktopCredential {
+  id: string
+  label: string
+  available: boolean
+}
+
+export const isDesktopRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+export function invokeDesktop<T>(command: string, args?: Record<string, unknown>) {
+  return invoke<T>(command, args)
+}
+
+export function stripCredentialPlaintext(value: string) {
+  try {
+    const parsed = JSON.parse(value)
+    const visit = (input: unknown): unknown => {
+      if (Array.isArray(input)) return input.map(visit)
+      if (!input || typeof input !== 'object') return input
+      return Object.fromEntries(Object.entries(input).map(([key, item]) => [key, key === 'apiKey' ? '' : visit(item)]))
+    }
+    return JSON.stringify(visit(parsed))
+  } catch {
+    return value
   }
 }
 
@@ -172,6 +206,54 @@ export const browserRuntime: RuntimeContract = {
       window.setTimeout(() => URL.revokeObjectURL(url), 0)
     },
   },
+}
+
+export const desktopRuntime: RuntimeContract = {
+  mode: 'desktop',
+  authentication: {
+    getSessionToken: () => null,
+  },
+  credentials: {
+    get: (id) => invokeDesktop<string | null>('credential_get', { id }),
+    set: (id, value) => invokeDesktop('credential_set', { id, value }),
+  },
+  metadata: {
+    getItem: (key) => invokeDesktop<string | null>('metadata_get', { key }),
+    setItem: (key, value) => invokeDesktop('metadata_set', { key, value: stripCredentialPlaintext(value) }),
+    removeItem: (key) => invokeDesktop('metadata_remove', { key }),
+  },
+  files: {
+    read: (path) => invokeDesktop<string | null>('file_read', { path }),
+    write: (path, dataUrl) => invokeDesktop('file_write', { path, dataUrl }),
+    remove: (path) => invokeDesktop('file_remove', { path }),
+    clear: () => invokeDesktop('files_clear'),
+  },
+  downloads: {
+    save: async (blob, name) => {
+      const path = await save({ defaultPath: name })
+      if (!path) return
+      const dataUrl = await blobToDataUrl(blob)
+      await invokeDesktop('download_write', { path, dataUrl })
+    },
+  },
+}
+
+export const appRuntime = isDesktopRuntime ? desktopRuntime : browserRuntime
+
+export function getDesktopLibraryStatus() {
+  return invokeDesktop<DesktopLibraryStatus>('library_status')
+}
+
+export function initializeDesktopLibrary(path: string) {
+  return invokeDesktop<DesktopLibraryStatus>('library_initialize', { path })
+}
+
+export function listDesktopCredentials() {
+  return invokeDesktop<DesktopCredential[]>('credential_list')
+}
+
+export async function createDesktopCredential(label: string, value: string) {
+  return invokeDesktop<DesktopCredential>('credential_create', { label, value })
 }
 
 export async function hasLowBrowserStorage() {

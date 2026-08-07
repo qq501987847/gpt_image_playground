@@ -55,6 +55,13 @@ export interface PersistedStateMergePlan {
   shouldMigrateAgentConversations: boolean
 }
 
+export function getCredentialSafeSettings(input: Partial<AppSettings> | unknown, stripAll = false) {
+  const settings = normalizeSettings(input)
+  const profiles = settings.profiles.map((profile) => stripAll || profile.keyId ? { ...profile, apiKey: '' } : profile)
+  const active = profiles.find((profile) => profile.id === settings.activeProfileId) ?? profiles[0]
+  return stripAll || active?.keyId ? { ...settings, apiKey: '', profiles } : { ...settings, profiles }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const proto = Object.getPrototypeOf(value)
@@ -78,16 +85,15 @@ function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
     moderation: value.moderation === 'auto' || value.moderation === 'low' ? value.moderation : fallback.moderation,
     n: typeof value.n === 'number' && Number.isFinite(value.n) ? value.n : fallback.n,
     transparent_output: typeof value.transparent_output === 'boolean' ? value.transparent_output : fallback.transparent_output,
+    geminiAspectRatio: typeof value.geminiAspectRatio === 'string' ? value.geminiAspectRatio : fallback.geminiAspectRatio,
+    geminiImageSize: value.geminiImageSize === '1K' || value.geminiImageSize === '2K' || value.geminiImageSize === '4K' || value.geminiImageSize === 'auto'
+      ? value.geminiImageSize
+      : fallback.geminiImageSize,
   }
 }
 
 export function createPersistedState(state: PersistedStateSource, includeLegacyAgentConversations = false): PersistedAppState {
-  const normalizedSettings = normalizeSettings(state.settings)
-  const profiles = normalizedSettings.profiles.map((profile) => profile.keyId ? { ...profile, apiKey: '' } : profile)
-  const active = profiles.find((profile) => profile.id === normalizedSettings.activeProfileId) ?? profiles[0]
-  const settings = active && active.keyId
-    ? { ...normalizedSettings, apiKey: '', profiles }
-    : { ...normalizedSettings, profiles }
+  const settings = getCredentialSafeSettings(state.settings)
   const galleryInputDraft = saveGalleryInputDraft(state)
   return {
     settings,

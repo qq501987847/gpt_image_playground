@@ -66,10 +66,10 @@ import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentRoundPa
 import { canonicalizeBatchFunctionCallArguments, countResponseToolCalls, createReadyAgentRecoveredToolState, getAgentFunctionOutputCallIds, getAgentRecoveredFailureError, getAgentRecoveredToolCallCount, getPersistableAgentConversations, getPersistableRawResponsePayload, mergeResponseOutputItems, scrubResponseOutputForDeletedAgentTasks, scrubTaskRawResponsePayloadForDeletedTasks } from './lib/agentResponseState'
 import { cleanStaleAgentInputDrafts, clearInputDraftState, isEmptyAgentInputDraft, normalizeAgentInputDrafts, remapAgentInputDraftMentionsForPathChange, restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveAgentInputDrafts, saveGalleryInputDraft, syncActiveInputDraft, updateInputDraftImages } from './lib/inputDraftState'
 import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefaultFavoriteCollection, deleteFavoriteCollectionState, ensureDefaultFavoriteCollection, getTaskFavoriteCollectionIds, mergeFavoriteCollections, normalizeFavoriteCollectionIds, normalizeFavoriteCollectionName, normalizeFavoriteCollections, normalizeFavoritePatch, normalizeLoadedFavoriteState, resolveDefaultFavoriteCollectionId, sameFavoriteCollectionIds } from './lib/favoriteState'
-import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
+import { createPersistedState, getCredentialSafeSettings, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
-import { browserRuntime, hasLowBrowserStorage } from './lib/runtime'
+import { appRuntime, hasLowBrowserStorage, isDesktopRuntime } from './lib/runtime'
 import { deleteCloudAsset, getCloudAssetDownload, isCloudAssetsConfigured, uploadCloudAsset } from './lib/cloudAssets'
 
 const FAL_RECOVERY_POLL_MS = 10_000
@@ -946,7 +946,7 @@ export const useStore = create<AppState>()(
     {
       name: 'awai-creative-workbench-state',
       version: 1,
-      storage: createJSONStorage(() => browserRuntime.metadata),
+      storage: createJSONStorage(() => appRuntime.metadata),
       migrate: migratePersistedState,
       partialize: getPersistedState,
       merge: mergePersistedState,
@@ -4397,7 +4397,8 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     if (options.exportTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('当前有任务正在进行，请完成或停止后再导出。')
     const tasks = options.exportTasks ? await getAllTasks() : []
     const imageIds = options.exportTasks ? await getAllImageIds() : []
-    const { settings, agentConversations, favoriteCollections, defaultFavoriteCollectionId } = state
+    const { agentConversations, favoriteCollections, defaultFavoriteCollectionId } = state
+    const settings = getCredentialSafeSettings(state.settings, isDesktopRuntime)
     const exportedAt = Date.now()
     const params = {
       options,

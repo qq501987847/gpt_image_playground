@@ -20,6 +20,7 @@ import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectio
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { hydrateSub2ApiProfiles, initializeSub2ApiSession, useSub2ApiSession } from './lib/sub2apiSession'
 import CloudBackupDisclosure from './components/CloudBackupDisclosure'
+import { isDesktopRuntime } from './lib/runtime'
 
 export default function App() {
   const sub2api = useSub2ApiSession()
@@ -104,7 +105,7 @@ export default function App() {
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />
-      <CloudBackupDisclosure />
+      {!isDesktopRuntime && <CloudBackupDisclosure />}
     </>
   )
 }

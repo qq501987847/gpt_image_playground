@@ -529,6 +529,7 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
     keyId: typeof record.keyId === 'string' ? record.keyId : null,
+    credentialRebindRequired: record.credentialRebindRequired === true,
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds),
   }
 }

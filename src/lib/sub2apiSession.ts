@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { ApiProfile } from '../types'
-import { browserRuntime } from './runtime'
+import { appRuntime, createDesktopCredential, invokeDesktop, isDesktopRuntime, listDesktopCredentials } from './runtime'
 import { bootstrapIframeContext, type IframeBootstrapContext } from './iframeBootstrap'
 import { discoverSub2ApiModels, isSub2ApiKeyUsable, loadSub2ApiIdentity, readKeyBinding, writeKeyBinding, type Sub2ApiKey, type Sub2ApiUser } from './sub2api'
 
@@ -21,6 +21,23 @@ function setState(next: Sub2ApiSessionState) {
 }
 
 export async function initializeSub2ApiSession() {
+  if (isDesktopRuntime) {
+    const credentials = await listDesktopCredentials()
+    setState({
+      status: 'ready',
+      context: null,
+      user: { id: 'desktop', name: '桌面用户' },
+      keys: credentials.map((credential) => ({
+        id: credential.id,
+        name: credential.label,
+        value: '',
+        group: '',
+        status: credential.available ? 'active' : 'missing',
+      })),
+      error: null,
+    })
+    return state
+  }
   const params = new URLSearchParams(window.location.search)
   const embedded = ['user_id', 'token', 'src_host', 'src_url', 'ui_mode'].some((key) => params.has(key))
   if (!embedded) return state
@@ -55,24 +72,48 @@ export function useSub2ApiSession() {
 }
 
 export async function hydrateSub2ApiProfiles(profiles: ApiProfile[]) {
+  if (isDesktopRuntime) {
+    const baseUrl = await invokeDesktop<string>('desktop_base_url')
+    return Promise.all(profiles.map(async (profile) => {
+      const apiKey = profile.keyId ? await appRuntime.credentials.get(profile.keyId) ?? '' : ''
+      return { ...profile, baseUrl, apiKey, credentialRebindRequired: Boolean(profile.keyId && !apiKey) }
+    }))
+  }
   if (state.status !== 'ready' || !state.context) return profiles
   return Promise.all(profiles.map(async (profile) => {
-    const keyId = profile.keyId ?? await readKeyBinding(browserRuntime, state.context!, profile.id)
+    const keyId = profile.keyId ?? await readKeyBinding(appRuntime, state.context!, profile.id)
     const key = state.keys.find((item) => item.id === keyId && isSub2ApiKeyUsable(item))
     return { ...profile, baseUrl: state.context!.origin, keyId: keyId ?? null, apiKey: key?.value ?? '' }
   }))
 }
 
 export async function bindSub2ApiProfile(profile: ApiProfile, keyId: string | null) {
+  if (isDesktopRuntime) {
+    const baseUrl = await invokeDesktop<string>('desktop_base_url')
+    const apiKey = keyId ? await appRuntime.credentials.get(keyId) ?? '' : ''
+    return { ...profile, baseUrl, keyId, apiKey, credentialRebindRequired: Boolean(keyId && !apiKey) }
+  }
   if (state.status !== 'ready' || !state.context) return { ...profile, keyId: null, apiKey: '' }
   const key = state.keys.find((item) => item.id === keyId && isSub2ApiKeyUsable(item))
-  await writeKeyBinding(browserRuntime, state.context, profile.id, key?.id ?? null)
+  await writeKeyBinding(appRuntime, state.context, profile.id, key?.id ?? null)
   return { ...profile, baseUrl: state.context.origin, keyId: key?.id ?? null, apiKey: key?.value ?? '' }
 }
 
 export async function discoverProfileModels(profile: ApiProfile) {
+  if (isDesktopRuntime) {
+    if (!profile.keyId) throw new Error('请先选择可用凭据')
+    const value = await appRuntime.credentials.get(profile.keyId)
+    if (!value) throw new Error('凭据缺失，需要重新绑定')
+    const origin = await invokeDesktop<string>('desktop_base_url')
+    return discoverSub2ApiModels(origin, { id: profile.keyId, name: '', value, group: '', status: 'active' }, profile.provider)
+  }
   if (state.status !== 'ready' || !state.context) return []
   const key = state.keys.find((item) => item.id === profile.keyId && isSub2ApiKeyUsable(item))
   if (!key) throw new Error('请先选择可用 Key')
   return discoverSub2ApiModels(state.context.origin, key, profile.provider)
+}
+
+export async function addDesktopCredential(label: string, value: string) {
+  await createDesktopCredential(label, value)
+  return initializeSub2ApiSession()
 }
