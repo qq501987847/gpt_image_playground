@@ -4608,7 +4608,12 @@ export async function importData(input: File | File[], options: ImportOptions = 
         (current, manifest) => mergeImportedSettings(current, manifest.settings),
         state.settings,
       )
-      state.setSettings(settings)
+      const profiles = await Promise.all(settings.profiles.map(async (profile) => {
+        if (!isDesktopRuntime || !profile.keyId) return profile
+        const apiKey = await appRuntime.credentials.get(profile.keyId)
+        return { ...profile, apiKey: '', credentialRebindRequired: !apiKey }
+      }))
+      state.setSettings({ ...settings, profiles })
     }
 
     let msg = '数据已成功导入'

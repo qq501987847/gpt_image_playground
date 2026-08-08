@@ -24,6 +24,7 @@
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-http": "^2.5.9",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "core-js": "^3.49.0",
     "fflate": "^0.8.3",
     "katex": "^0.16.47",
@@ -40,7 +41,7 @@
     "dompurify": "^3.4.7"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.8.0",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^26.1.2",
     "@types/pg": "^8.20.4",
     "@types/react": "^19.1.2",

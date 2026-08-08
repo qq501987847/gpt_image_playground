@@ -31,6 +31,7 @@ struct LibraryStatus {
     initialized: bool,
     path: Option<String>,
     suggested_path: String,
+    unavailable_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +52,13 @@ fn open_library(root: &Path) -> Result<Library, String> {
         root: root.to_path_buf(),
         db,
     })
+}
+
+fn open_existing_library(root: &Path) -> Result<Library, String> {
+    if !root.join("metadata/awai.db").is_file() {
+        return Err("所选目录不是现有 AWAI 素材库".to_string());
+    }
+    open_library(root)
 }
 
 fn migrate(db: &Connection) -> Result<(), String> {
@@ -134,6 +142,63 @@ fn write_config(path: &Path, library_path: &Path) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+fn configured_library_path(config_path: &Path) -> Option<PathBuf> {
+    fs::read(config_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| value.get("path").and_then(Value::as_str).map(PathBuf::from))
+}
+
+fn library_status_from_state(state: &AppState, library: &Option<Library>) -> LibraryStatus {
+    let unavailable_path = if library.is_none() {
+        configured_library_path(&state.config_path).map(|path| path.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+    LibraryStatus {
+        initialized: library.is_some(),
+        path: library
+            .as_ref()
+            .map(|library| library.root.to_string_lossy().into_owned()),
+        suggested_path: state.suggested_path.to_string_lossy().into_owned(),
+        unavailable_path,
+    }
+}
+
+fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if path.is_dir() {
+            copy_directory(&path, &target_path)?;
+        } else if path.is_file() {
+            fs::copy(&path, &target_path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn verify_library(library: &Library) -> Result<(), String> {
+    migrate(&library.db)?;
+    for table in ["images", "thumbnails"] {
+        let mut statement = library
+            .db
+            .prepare(&format!("SELECT relative_path FROM {table}"))
+            .map_err(|error| error.to_string())?;
+        let paths = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        if let Some(path) = paths.iter().find(|path| !library.root.join(path).is_file()) {
+            return Err(format!("素材库缺少登记文件：{path}"));
+        }
+    }
+    Ok(())
+}
+
 fn parse_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
     let (header, encoded) = data_url
         .split_once(',')
@@ -203,13 +268,7 @@ fn library_status(state: State<AppState>) -> Result<LibraryStatus, String> {
         .library
         .lock()
         .map_err(|_| "素材库状态不可用".to_string())?;
-    Ok(LibraryStatus {
-        initialized: guard.is_some(),
-        path: guard
-            .as_ref()
-            .map(|library| library.root.to_string_lossy().into_owned()),
-        suggested_path: state.suggested_path.to_string_lossy().into_owned(),
-    })
+    Ok(library_status_from_state(&state, &guard))
 }
 
 #[tauri::command]
@@ -221,11 +280,7 @@ fn library_initialize(path: String, state: State<AppState>) -> Result<LibrarySta
         .map_err(|_| "素材库状态不可用".to_string())?;
     if let Some(current) = guard.as_ref() {
         if current.root == root {
-            return Ok(LibraryStatus {
-                initialized: true,
-                path: Some(root.to_string_lossy().into_owned()),
-                suggested_path: state.suggested_path.to_string_lossy().into_owned(),
-            });
+            return Ok(library_status_from_state(&state, &guard));
         }
         let running: i64 = current
             .db
@@ -243,11 +298,75 @@ fn library_initialize(path: String, state: State<AppState>) -> Result<LibrarySta
     let library = create_library(&root)?;
     write_config(&state.config_path, &root)?;
     *guard = Some(library);
-    Ok(LibraryStatus {
-        initialized: true,
-        path: Some(root.to_string_lossy().into_owned()),
-        suggested_path: state.suggested_path.to_string_lossy().into_owned(),
-    })
+    Ok(library_status_from_state(&state, &guard))
+}
+
+#[tauri::command]
+fn library_reconnect(state: State<AppState>) -> Result<LibraryStatus, String> {
+    let path = configured_library_path(&state.config_path)
+        .ok_or_else(|| "没有可恢复的素材库位置".to_string())?;
+    let library = open_existing_library(&path)?;
+    let mut guard = state
+        .library
+        .lock()
+        .map_err(|_| "素材库状态不可用".to_string())?;
+    *guard = Some(library);
+    Ok(library_status_from_state(&state, &guard))
+}
+
+#[tauri::command]
+fn library_relocate(path: String, state: State<AppState>) -> Result<LibraryStatus, String> {
+    let root = PathBuf::from(path);
+    let library = open_existing_library(&root)?;
+    verify_library(&library)?;
+    write_config(&state.config_path, &root)?;
+    let mut guard = state
+        .library
+        .lock()
+        .map_err(|_| "素材库状态不可用".to_string())?;
+    *guard = Some(library);
+    Ok(library_status_from_state(&state, &guard))
+}
+
+#[tauri::command]
+fn library_migrate(path: String, state: State<AppState>) -> Result<LibraryStatus, String> {
+    let target = PathBuf::from(path);
+    let mut guard = state
+        .library
+        .lock()
+        .map_err(|_| "素材库状态不可用".to_string())?;
+    let current = guard.as_mut().ok_or_else(|| "请先连接素材库".to_string())?;
+    if current.root == target {
+        return Ok(library_status_from_state(&state, &guard));
+    }
+    if target.exists() {
+        return Err("目标目录已存在，请选择一个尚未创建的目录".to_string());
+    }
+    let running: i64 = current
+        .db
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE json_extract(json, '$.status') = 'running'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if running > 0 {
+        return Err("任务运行期间不能迁移素材库位置".to_string());
+    }
+    current
+        .db
+        .execute_batch("PRAGMA wal_checkpoint(FULL);")
+        .map_err(|error| error.to_string())?;
+    let staging = target.with_file_name(format!(".awai-migration-{}", Uuid::new_v4()));
+    copy_directory(&current.root, &staging)?;
+    let migrated = open_existing_library(&staging)?;
+    verify_library(&migrated)?;
+    drop(migrated);
+    fs::rename(&staging, &target).map_err(|error| error.to_string())?;
+    let library = open_existing_library(&target)?;
+    write_config(&state.config_path, &target)?;
+    *guard = Some(library);
+    Ok(library_status_from_state(&state, &guard))
 }
 
 #[tauri::command]
@@ -746,6 +865,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -771,6 +891,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             library_status,
             library_initialize,
+            library_reconnect,
+            library_relocate,
+            library_migrate,
             desktop_base_url,
             metadata_get,
             metadata_set,
@@ -823,6 +946,7 @@ mod tests {
             initialized: false,
             path: None,
             suggested_path: root.to_string_lossy().into_owned(),
+            unavailable_path: None,
         };
         assert!(!root.exists());
     }
@@ -880,6 +1004,65 @@ mod tests {
         assert!(!root.join("generated/orphan.tmp").exists());
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn verifies_migrated_library_before_switching_and_keeps_source() {
+        let source = temp_library("migration-source");
+        let target = temp_library("migration-target");
+        let library = create_library(&source).unwrap();
+        fs::write(source.join("generated/result.png"), b"image").unwrap();
+        library
+            .db
+            .execute(
+                "INSERT INTO images(id, json, relative_path) VALUES ('result', '{}', 'generated/result.png')",
+                [],
+            )
+            .unwrap();
+        verify_library(&library).unwrap();
+        drop(library);
+
+        copy_directory(&source, &target).unwrap();
+        let migrated = open_existing_library(&target).unwrap();
+        verify_library(&migrated).unwrap();
+        assert_eq!(
+            fs::read(target.join("generated/result.png")).unwrap(),
+            b"image"
+        );
+        assert!(source.join("generated/result.png").is_file());
+        drop(migrated);
+        fs::remove_dir_all(source).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn failed_migration_validation_keeps_original_library_available() {
+        let source = temp_library("migration-rollback-source");
+        let target = temp_library("migration-rollback-target");
+        let library = create_library(&source).unwrap();
+        library
+            .db
+            .execute(
+                "INSERT INTO images(id, json, relative_path) VALUES ('missing', '{}', 'generated/missing.png')",
+                [],
+            )
+            .unwrap();
+        drop(library);
+
+        copy_directory(&source, &target).unwrap();
+        let migrated = open_existing_library(&target).unwrap();
+        assert!(verify_library(&migrated).is_err());
+        drop(migrated);
+        assert!(open_existing_library(&source).is_ok());
+        fs::remove_dir_all(source).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn recovery_only_opens_existing_libraries() {
+        let root = temp_library("missing-library");
+        assert!(open_existing_library(&root).is_err());
+        assert!(!root.exists());
     }
 
     #[test]

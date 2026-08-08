@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { open } from '@tauri-apps/plugin-dialog'
 import { normalizeBaseUrl } from '../lib/api'
 import { hasActiveDataOperations } from '../lib/dataOperations'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
@@ -47,7 +48,7 @@ import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/Pro
 import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/ZipDownloadRouteModal'
 import Sub2ApiProfileFields from './settings/Sub2ApiProfileFields'
 import { useSub2ApiSession } from '../lib/sub2apiSession'
-import { isDesktopRuntime } from '../lib/runtime'
+import { isDesktopRuntime, migrateDesktopLibrary } from '../lib/runtime'
 
 function newId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
@@ -185,6 +186,7 @@ export default function SettingsModal() {
   const [isExportingData, setIsExportingData] = useState(false)
   const [isImportingData, setIsImportingData] = useState(false)
   const [isImportingJson, setIsImportingJson] = useState(false)
+  const [isMigratingLibrary, setIsMigratingLibrary] = useState(false)
   const [draggedProfileId, setDraggedProfileId] = useState<string | null>(null)
   const [dragOverProfileId, setDragOverProfileId] = useState<string | null>(null)
   const [dragDropPosition, setDragDropPosition] = useState<'before' | 'after' | null>(null)
@@ -1649,6 +1651,27 @@ export default function SettingsModal() {
             
             {activeTab === 'data' && (
               <div className="space-y-4">
+                {isDesktopRuntime && (
+                  <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-white/[0.02]">
+                    <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">迁移素材库</h4>
+                    <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">复制数据库和全部受管文件，校验通过后才切换位置。原素材库会保留。</p>
+                    <button
+                      type="button"
+                      disabled={isMigratingLibrary || hasRunningOperations}
+                      onClick={() => void open({ directory: true, multiple: false }).then((path) => {
+                        if (typeof path !== 'string') return
+                        setIsMigratingLibrary(true)
+                        void migrateDesktopLibrary(path)
+                          .then(() => showToast('素材库已迁移，原目录仍保留', 'success'))
+                          .catch((error) => showToast(error instanceof Error ? error.message : String(error), 'error'))
+                          .finally(() => setIsMigratingLibrary(false))
+                      })}
+                      className="mt-3 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50 dark:border-white/[0.12] dark:text-gray-200"
+                    >
+                      {isMigratingLibrary ? '迁移中' : hasRunningOperations ? '任务运行中不可迁移' : '选择新位置'}
+                    </button>
+                  </div>
+                )}
                 <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-500/20 dark:bg-blue-500/5">
                   <div className="flex items-center justify-between gap-4">
                     <div>

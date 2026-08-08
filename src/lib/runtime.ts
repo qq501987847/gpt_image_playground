@@ -39,6 +39,7 @@ export interface DesktopLibraryStatus {
   initialized: boolean
   path: string | null
   suggestedPath: string
+  unavailablePath: string | null
 }
 
 export interface DesktopCredential {
@@ -246,6 +247,18 @@ export function getDesktopLibraryStatus() {
 
 export function initializeDesktopLibrary(path: string) {
   return invokeDesktop<DesktopLibraryStatus>('library_initialize', { path })
+}
+
+export function reconnectDesktopLibrary() {
+  return invokeDesktop<DesktopLibraryStatus>('library_reconnect')
+}
+
+export function relocateDesktopLibrary(path: string) {
+  return invokeDesktop<DesktopLibraryStatus>('library_relocate', { path })
+}
+
+export function migrateDesktopLibrary(path: string) {
+  return invokeDesktop<DesktopLibraryStatus>('library_migrate', { path })
 }
 
 export function listDesktopCredentials() {

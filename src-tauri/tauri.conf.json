@@ -24,9 +24,15 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "icon": [],
     "licenseFile": "../LICENSE",
-    "targets": "all"
+    "targets": ["nsis", "dmg", "app"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2OTFFMDEwNURGRUZBREYKUldUZit2NWRFT0NSVmplWXZTTFlaRTI0SVh2RjBBNGNoOXF1OElDdmpqTUE5S1hTKzFnM3B5TysK",
+      "endpoints": ["https://updates.awai.invalid/{{target}}/{{arch}}/{{current_version}}"]
+    }
   }
 }

@@ -20,6 +20,7 @@ import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectio
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { hydrateSub2ApiProfiles, initializeSub2ApiSession, useSub2ApiSession } from './lib/sub2apiSession'
 import CloudBackupDisclosure from './components/CloudBackupDisclosure'
+import DesktopUpdatePrompt from './components/DesktopUpdatePrompt'
 import { isDesktopRuntime } from './lib/runtime'
 
 export default function App() {
@@ -106,6 +107,7 @@ export default function App() {
       <MaskEditorModal />
       <ImageContextMenu />
       {!isDesktopRuntime && <CloudBackupDisclosure />}
+      {isDesktopRuntime && <DesktopUpdatePrompt />}
     </>
   )
 }
