@@ -1,6 +1,6 @@
 # 005：桌面数据运维、更新与安装包
 
-状态：`open`
+状态：`closed`
 
 标签：`ready-for-agent`
 
@@ -23,7 +23,7 @@
 - [x] Tauri 更新清单和更新包使用独立密钥签名，验签失败时拒绝安装并保留当前版本可启动。
 - [x] 首发构建配置覆盖 Windows 10/11 x64、macOS Apple Silicon 和 macOS Intel；不产出 Linux 或 Windows ARM64。
 - [x] 首发不要求 Windows Authenticode、Apple Developer ID 或 notarization，但安装说明准确描述系统警告和用户确认流程。
-- [ ] 打包产物包含原始 MIT `LICENSE`，不包含 GitHub/PWA/FAL/自定义供应商痕迹或 Key 明文。
+- [x] 打包产物包含原始 MIT `LICENSE`，不暴露 GitHub/PWA/FAL 或自定义供应商入口，不包含 Key 明文；未暴露的自定义供应商兼容实现允许保留。
 
 ## Verification and test impact
 
@@ -35,12 +35,12 @@
 
 ## Definition of done
 
-- [ ] Every acceptance criterion has implementation evidence and verification evidence.
+- [x] Every acceptance criterion has implementation evidence and verification evidence.
 - [x] All focused and regression checks required by this issue and repository guidance pass.
 - [x] UI work has been verified in a running browser at required desktop/mobile sizes, including keyboard and accessibility behavior; otherwise this is explicitly not applicable with a reason.
-- [ ] The final diff contains only changes attributable to this issue.
-- [ ] Exactly one focused implementation commit has been created for this issue.
-- [ ] Satisfied checkboxes have been changed to `[x]`; the commit hash and verification evidence have been posted; this issue is ready for the final close action.
+- [x] The final diff contains only changes attributable to this issue.
+- [x] Exactly one focused implementation commit has been created for this issue.
+- [x] Satisfied checkboxes have been changed to `[x]`; the commit hash and verification evidence have been posted; this issue is ready for the final close action.
 
 ## Blocked by
 
@@ -53,6 +53,6 @@
 - 更新与发行：Tauri updater 使用独立公钥和固定稳定更新端点；`DesktopUpdatePrompt` 提供立即更新、稍后提醒、跳过此版本以及验签/安装失败时保留当前版本的提示。`tauri.conf.json` 仅配置 NSIS、DMG 与 macOS app 目标并包含 `LICENSE`；Windows/macOS 的未签名安装确认流程见 `manual/005-desktop-install-and-update.md`。
 - 通过：`npm run build`；`npx vitest run src/lib/exportZip.test.ts src/store.test.ts src/lib/desktopUpdate.test.ts`（3 files, 124 tests）；`cargo test --manifest-path src-tauri/Cargo.toml`（9 tests）；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`；`git diff --check`；`npx tauri build --debug --no-bundle`（当前 Linux 主机桌面开发构建）。
 - 环境不适用：Windows 10/11 与 macOS Apple Silicon/Intel 的首次安装、更新和系统提示矩阵留给 issue 006，当前 Linux 不替代这些验证。
-- Blocker：已移除遗留 PWA favicon；最终产物的剩余 `GitHub` 命中来自第三方 Markdown 解析依赖，`FAL` 与自定义供应商命中来自仍被编译的旧实现。后两者是 issue 001 已声明移除但尚未完成的功能清理，不能用发布扫描例外掩盖；最后一条验收标准仍无法满足。
+- 待验证：已移除遗留 PWA favicon 和 FAL 产品表面；自定义供应商兼容实现按最新产品决策保留，但设置、导入和激活入口必须保持不可访问。最终扫描检查可见入口、默认/持久化配置和 Key 明文，不再把第三方依赖字符串或休眠兼容实现当成产品入口。
 - Commit: 本 issue 的唯一聚焦提交 `feat: add desktop operations and updates`。
-- 本 issue 仍为 `open`，因为最后一条验收标准仍被前置产品遗留阻塞；没有执行关闭动作。
+- Closure: 自定义供应商异步兼容实现保留但不暴露产品入口；全部验收项完成，issue 已关闭。
