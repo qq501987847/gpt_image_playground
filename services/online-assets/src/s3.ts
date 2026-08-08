@@ -1,4 +1,4 @@
-import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import type { AssetFile, ObjectStore } from './types.js'
@@ -31,10 +31,6 @@ export class S3ObjectStore implements ObjectStore {
   }
 
   async remove(objectKeys: string[]) {
-    if (!objectKeys.length) return
-    await this.client.send(new DeleteObjectsCommand({
-      Bucket: this.bucket,
-      Delete: { Objects: objectKeys.map((Key) => ({ Key })), Quiet: true },
-    }))
+    await Promise.all(objectKeys.map((Key) => this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key }))))
   }
 }

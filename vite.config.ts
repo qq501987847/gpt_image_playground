@@ -21,7 +21,19 @@ export default defineConfig(({ command }) => {
   const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
 
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: 'awai-version-file',
+        generateBundle() {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'version.json',
+            source: `${JSON.stringify({ version: pkg.version })}\n`,
+          })
+        },
+      },
+    ],
     base: './',
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),

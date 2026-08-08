@@ -1,9 +1,8 @@
-// @ts-expect-error 旧 FAL 测试仍引用已移除的可选依赖，默认构建不应因此恢复该依赖。
 import { fal } from '@fal-ai/client'
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
 import { createDefaultFalProfile, DEFAULT_FAL_BASE_URL, DEFAULT_SETTINGS } from './apiProfiles'
-import { callFalAiImageApi } from './falAiImageApi'
+import { callFalAiImageApi, getFalQueuedImageResult } from './falAiImageApi'
 
 vi.mock('@fal-ai/client', () => ({
   fal: {
@@ -19,6 +18,10 @@ vi.mock('@fal-ai/client', () => ({
 const falMock = fal as unknown as {
   config: Mock
   subscribe: Mock
+  queue: {
+    subscribeToStatus: Mock
+    result: Mock
+  }
 }
 
 describe('callFalAiImageApi', () => {
@@ -66,5 +69,18 @@ describe('callFalAiImageApi', () => {
       suppressLocalCredentialsWarning: true,
       proxyUrl: 'https://fal-proxy.example.com/api/fal',
     })
+  })
+
+  it('recovers an enqueued FAL request without submitting generation again', async () => {
+    falMock.queue.subscribeToStatus.mockResolvedValue({ status: 'COMPLETED' })
+    falMock.queue.result.mockResolvedValue({ data: { images: [{ b64_json: 'aW1hZ2U=' }] } })
+    const profile = createDefaultFalProfile({ apiKey: 'fal-key' })
+
+    await expect(getFalQueuedImageResult(profile, 'openai/gpt-image-2', 'req-1', { ...DEFAULT_PARAMS })).resolves.toMatchObject({
+      images: ['data:image/png;base64,aW1hZ2U='],
+    })
+    expect(falMock.queue.subscribeToStatus).toHaveBeenCalledWith('openai/gpt-image-2', { requestId: 'req-1', logs: true })
+    expect(falMock.queue.result).toHaveBeenCalledWith('openai/gpt-image-2', { requestId: 'req-1' })
+    expect(falMock.subscribe).not.toHaveBeenCalled()
   })
 })

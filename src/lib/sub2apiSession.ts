@@ -12,7 +12,14 @@ interface Sub2ApiSessionState {
   error: string | null
 }
 
-let state: Sub2ApiSessionState = { status: 'standalone', context: null, user: null, keys: [], error: null }
+const releaseMode = import.meta.env.VITE_AWAI_RELEASE_MODE === 'true'
+let state: Sub2ApiSessionState = {
+  status: releaseMode && !isDesktopRuntime ? 'loading' : 'standalone',
+  context: null,
+  user: null,
+  keys: [],
+  error: null,
+}
 const listeners = new Set<() => void>()
 
 function setState(next: Sub2ApiSessionState) {
@@ -40,7 +47,10 @@ export async function initializeSub2ApiSession() {
   }
   const params = new URLSearchParams(window.location.search)
   const embedded = ['user_id', 'token', 'src_host', 'src_url', 'ui_mode'].some((key) => params.has(key))
-  if (!embedded) return state
+  if (!embedded) {
+    if (releaseMode) setState({ status: 'invalid', context: null, user: null, keys: [], error: '请从 Sub2API 进入 AWAI创作工作台' })
+    return state
+  }
   const context = bootstrapIframeContext()
   if (!context) {
     setState({ status: 'invalid', context: null, user: null, keys: [], error: '入口无效' })

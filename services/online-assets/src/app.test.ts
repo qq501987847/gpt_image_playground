@@ -34,6 +34,16 @@ const record: AssetRecord = {
 }
 
 describe('online asset HTTP API', () => {
+  it('exposes a credential-free health check without invoking identity verification', async () => {
+    const verify = vi.fn()
+    const handler = createHttpHandler({} as AssetService, { verify }, ['https://awai.example'])
+    const url = await listen(handler)
+    const response = await fetch(`${url}/healthz`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ status: 'ok' })
+    expect(verify).not.toHaveBeenCalled()
+  })
+
   it('rejects claimed-user and verified JWT identity mismatch before asset initialization', async () => {
     const initialize = vi.fn()
     const handler = createHttpHandler(

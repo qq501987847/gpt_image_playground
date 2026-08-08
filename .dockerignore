@@ -1,5 +1,9 @@
 node_modules
 dist
+release-out
+graphify-out
+src-tauri/target
+.scratch
 .git
 .gitignore
 *.md

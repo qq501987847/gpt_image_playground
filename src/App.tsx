@@ -3,7 +3,6 @@ import { initStore } from './store'
 import { useStore } from './store'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
-import type { AppSettings } from './types'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
@@ -20,8 +19,9 @@ import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectio
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { hydrateSub2ApiProfiles, initializeSub2ApiSession, useSub2ApiSession } from './lib/sub2apiSession'
 import CloudBackupDisclosure from './components/CloudBackupDisclosure'
-import DesktopUpdatePrompt from './components/DesktopUpdatePrompt'
 import { isDesktopRuntime } from './lib/runtime'
+
+const releaseMode = import.meta.env.VITE_AWAI_RELEASE_MODE === 'true'
 
 export default function App() {
   const sub2api = useSub2ApiSession()
@@ -34,11 +34,6 @@ export default function App() {
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
-    const applyUrlSettings = (baseSettings: Partial<AppSettings>) => {
-      const nextSettings = buildSettingsFromUrlParams(baseSettings, searchParams)
-      return Object.keys(nextSettings).length ? nextSettings : baseSettings
-    }
-
     const clearAppliedUrlSettings = () => {
       if (!hasUrlSettingParams(searchParams)) return
 
@@ -49,7 +44,8 @@ export default function App() {
       window.history.replaceState(null, '', nextUrl)
     }
 
-    const nextSettings = buildSettingsFromUrlParams(useStore.getState().settings, searchParams)
+    const currentSettings = useStore.getState().settings
+    const nextSettings = releaseMode ? currentSettings : buildSettingsFromUrlParams(currentSettings, searchParams)
 
     setSettings(nextSettings)
 
@@ -107,7 +103,6 @@ export default function App() {
       <MaskEditorModal />
       <ImageContextMenu />
       {!isDesktopRuntime && <CloudBackupDisclosure />}
-      {isDesktopRuntime && <DesktopUpdatePrompt />}
     </>
   )
 }

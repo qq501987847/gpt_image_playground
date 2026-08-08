@@ -45,6 +45,7 @@ function serialize(record: AssetRecord, downloads?: { original: string; thumbnai
 export function createHttpHandler(service: AssetService, verifier: IdentityVerifier, webOrigins: string[]) {
   const allowedWebOrigins = new Set(webOrigins)
   return async (req: IncomingMessage, res: ServerResponse) => {
+    const url = new URL(req.url ?? '/', 'http://service.local')
     const webOrigin = String(req.headers.origin ?? '')
     if (webOrigin && allowedWebOrigins.has(webOrigin)) {
       res.setHeader('access-control-allow-origin', webOrigin)
@@ -56,6 +57,10 @@ export function createHttpHandler(service: AssetService, verifier: IdentityVerif
       send(res, allowedWebOrigins.has(webOrigin) ? 204 : 403)
       return
     }
+    if (req.method === 'GET' && url.pathname === '/healthz') {
+      send(res, 200, { status: 'ok' })
+      return
+    }
 
     try {
       const token = String(req.headers.authorization ?? '').match(/^Bearer (.+)$/)?.[1] ?? ''
@@ -65,8 +70,6 @@ export function createHttpHandler(service: AssetService, verifier: IdentityVerif
       const verified = await verifier.verify(sourceOrigin, token)
       if (verified.userId !== claimedUserId) throw new AssetError('identity_mismatch', '入口用户与菜单 JWT 身份不一致', 403)
       const identity = { sourceOrigin, userId: verified.userId }
-      const url = new URL(req.url ?? '/', 'http://service.local')
-
       if (req.method === 'POST' && url.pathname === '/v1/assets') {
         const result = await service.initialize(identity, await readJson(req) as InitializeAssetInput)
         send(res, 201, { asset: serialize(result.record), uploads: result.uploads })
