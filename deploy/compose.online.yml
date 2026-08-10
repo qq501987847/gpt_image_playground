@@ -1,3 +1,5 @@
+name: awai-web
+
 services:
   web:
     build:
