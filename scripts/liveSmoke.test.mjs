@@ -42,8 +42,7 @@ describe('live release smoke', () => {
       if (target === 'https://sub.example/api/v1/user/profile' && method === 'GET') return response({ data: { id: 'user-1' } })
       if (target === 'https://sub.example/api/v1/keys?page=1&page_size=1000') return response({ data: { items: [{ id: 'key-1', value: 'menu-derived-key' }] } })
       if (target === 'https://sub.example/api/v1/user/profile' && method === 'OPTIONS') return new Response(null, { status: 403 })
-      if (target === 'https://sub.example/v1/models') return response({ data: [{ id: 'gpt-image-2' }, { id: 'gpt-5' }] })
-      if (target === 'https://sub.example/v1beta/models') return response({ models: [{ name: 'gemini-3.1-flash-image-preview' }] })
+      if (target === 'https://sub.example/v1/models') return response({ data: [{ id: 'gpt-image-2' }, { id: 'gpt-5' }, { id: 'gemini-3.1-flash-image-preview' }] })
       if (target === 'https://sub.example/v1/responses') {
         responsesCalls += 1
         return responsesCalls === 1
@@ -67,8 +66,8 @@ describe('live release smoke', () => {
       throw new Error(`unexpected request: ${method} ${target}`)
     })
 
-    await expect(runLiveSmoke(env, request)).resolves.toHaveLength(18)
-    expect(request).toHaveBeenCalledTimes(18)
+    await expect(runLiveSmoke(env, request)).resolves.toHaveLength(17)
+    expect(request).toHaveBeenCalledTimes(17)
     const paidCalls = request.mock.calls.filter(([url]) => [
       '/v1/responses',
       '/v1/images/generations',

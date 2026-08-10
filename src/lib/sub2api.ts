@@ -1,4 +1,3 @@
-import type { ApiProvider } from '../types'
 import type { RuntimeContract } from './runtime'
 import type { IframeBootstrapContext } from './iframeBootstrap'
 
@@ -115,17 +114,24 @@ export async function loadSub2ApiIdentity(context: IframeBootstrapContext) {
   return { user, keys }
 }
 
-export async function discoverSub2ApiModels(origin: string, key: Sub2ApiKey, provider: ApiProvider) {
-  const path = provider === 'gemini' ? '/v1beta/models' : '/v1/models'
-  const payload = await fetchJson(`${origin}${path}`, { headers: { Authorization: `Bearer ${key.value}` } })
+export async function discoverSub2ApiModels(origin: string, key: Sub2ApiKey) {
+  const payload = await fetchJson(`${origin}/v1/models`, { headers: { Authorization: `Bearer ${key.value}` } })
   const record = getRecord(payload)
-  const items = provider === 'gemini' ? record.models : record.data
+  const items = record.data
   if (!Array.isArray(items)) return []
   return items.map((item) => {
     const model = getRecord(item)
-    const id = getString(model, 'id', 'name').replace(/^models\//, '')
-    return id
+    return getString(model, 'id')
   }).filter(Boolean)
+}
+
+export function splitSub2ApiModels(models: string[]) {
+  const gemini = models.filter((model) => /^(?:gemini-|imagen-)/i.test(model))
+  const geminiSet = new Set(gemini)
+  return {
+    openai: models.filter((model) => !geminiSet.has(model)),
+    gemini,
+  }
 }
 
 function bindingKey(context: Pick<IframeBootstrapContext, 'origin' | 'userId'>, profileId: string) {

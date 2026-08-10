@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { ApiProfile } from '../types'
 import { appRuntime, createDesktopCredential, invokeDesktop, isDesktopRuntime, listDesktopCredentials } from './runtime'
 import { bootstrapIframeContext, type IframeBootstrapContext } from './iframeBootstrap'
-import { discoverSub2ApiModels, isSub2ApiKeyUsable, loadSub2ApiIdentity, readKeyBinding, writeKeyBinding, type Sub2ApiKey, type Sub2ApiUser } from './sub2api'
+import { discoverSub2ApiModels, isSub2ApiKeyUsable, loadSub2ApiIdentity, readKeyBinding, splitSub2ApiModels, writeKeyBinding, type Sub2ApiKey, type Sub2ApiUser } from './sub2api'
 
 interface Sub2ApiSessionState {
   status: 'standalone' | 'loading' | 'ready' | 'invalid' | 'error'
@@ -192,15 +192,21 @@ export async function discoverProfileModels(profile: ApiProfile) {
     const value = await appRuntime.credentials.get(profile.keyId)
     if (!value) throw new Error('凭据缺失，需要重新绑定')
     const origin = await invokeDesktop<string>('desktop_base_url')
-    return discoverSub2ApiModels(origin, { id: profile.keyId, name: '', value, group: '', status: 'active' }, profile.provider)
+    const models = await discoverSub2ApiModels(origin, { id: profile.keyId, name: '', value, group: '', status: 'active' })
+    if (profile.provider === 'gemini') return splitSub2ApiModels(models).gemini
+    if (profile.provider === 'openai') return splitSub2ApiModels(models).openai
+    return models
   }
   if (state.status !== 'ready' || !state.context) return []
   const key = state.keys.find((item) => item.id === profile.keyId && isSub2ApiKeyUsable(item))
   if (!key) throw new Error('请先选择可用 Key')
-  return discoverSub2ApiModels(state.context.origin, key, profile.provider)
+  const models = await discoverSub2ApiModels(state.context.origin, key)
+  if (profile.provider === 'gemini') return splitSub2ApiModels(models).gemini
+  if (profile.provider === 'openai') return splitSub2ApiModels(models).openai
+  return models
 }
 
-export async function discoverModelsForKey(keyId: string) {
+export async function discoverModelsForKey(keyId: string): Promise<{ openai: string[], gemini: string[], errors: { openai?: string, gemini?: string } }> {
   if (devMockEnabled) {
     await new Promise((resolve) => window.setTimeout(resolve, 140))
     return { openai: getDevMockModels(keyId, 'openai'), gemini: getDevMockModels(keyId, 'gemini'), errors: {} }
@@ -219,17 +225,10 @@ export async function discoverModelsForKey(keyId: string) {
   const key = await getKey()
   const origin = isDesktopRuntime ? await invokeDesktop<string>('desktop_base_url') : state.context?.origin
   if (!origin) throw new Error('Sub2API 会话未就绪')
-  const [openai, gemini] = await Promise.allSettled([
-    discoverSub2ApiModels(origin, key, 'openai'),
-    discoverSub2ApiModels(origin, key, 'gemini'),
-  ])
+  const models = splitSub2ApiModels(await discoverSub2ApiModels(origin, key))
   return {
-    openai: openai.status === 'fulfilled' ? openai.value : [],
-    gemini: gemini.status === 'fulfilled' ? gemini.value : [],
-    errors: {
-      ...(openai.status === 'rejected' ? { openai: openai.reason instanceof Error ? openai.reason.message : String(openai.reason) } : {}),
-      ...(gemini.status === 'rejected' ? { gemini: gemini.reason instanceof Error ? gemini.reason.message : String(gemini.reason) } : {}),
-    },
+    ...models,
+    errors: {},
   }
 }
 

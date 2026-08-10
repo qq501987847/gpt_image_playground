@@ -110,16 +110,13 @@ export async function runLiveSmoke(env, request = fetch) {
     signal: AbortSignal.timeout(60_000),
   })
   if (rejectedOrigin.headers.get('access-control-allow-origin')) throw new Error('Sub2API 错误允许未知 origin')
-  const openAiModels = await jsonRequest(request, apiUrl(sub2ApiOrigin, '/v1/models'), { headers }, 'OpenAI 模型发现')
-  requireCors(openAiModels.response, webOrigin, 'OpenAI 模型发现')
-  const openAiModelIds = Array.isArray(openAiModels.body?.data) ? openAiModels.body.data.map((item) => String(item?.id ?? '')) : []
-  if (!openAiModelIds.includes(openAiImageModel) || !openAiModelIds.includes(responsesModel)) {
+  const models = await jsonRequest(request, apiUrl(sub2ApiOrigin, '/v1/models'), { headers }, '模型发现')
+  requireCors(models.response, webOrigin, '模型发现')
+  const modelIds = Array.isArray(models.body?.data) ? models.body.data.map((item) => String(item?.id ?? '')) : []
+  if (!modelIds.includes(openAiImageModel) || !modelIds.includes(responsesModel)) {
     throw new Error('OpenAI 模型发现未返回冒烟所需模型')
   }
-  const geminiModels = await jsonRequest(request, apiUrl(sub2ApiOrigin, '/v1beta/models'), { headers }, 'Gemini 模型发现')
-  requireCors(geminiModels.response, webOrigin, 'Gemini 模型发现')
-  const geminiModelNames = Array.isArray(geminiModels.body?.models) ? geminiModels.body.models.map((item) => String(item?.name ?? '').replace(/^models\//, '')) : []
-  if (!geminiModelNames.includes(geminiModel)) throw new Error('Gemini 模型发现未返回冒烟所需模型')
+  if (!modelIds.includes(geminiModel)) throw new Error('Gemini 模型发现未返回冒烟所需模型')
 
   const agent = await jsonRequest(request, apiUrl(sub2ApiOrigin, '/v1/responses'), {
     method: 'POST',
@@ -234,7 +231,7 @@ export async function runLiveSmoke(env, request = fetch) {
   }, '云素材删除')
   requireCors(deleted, webOrigin, '云素材删除')
 
-  return ['web', 'version', 'asset-ready', 'jwt', 'keys', 'cors-rejection', 'openai-models', 'gemini-models', 'agent-tool-call', 'openai-image', 'agent-continuation', 'gemini-image', 'asset-initialize', 'object-upload', 'asset-confirm', 'asset-list', 'object-download', 'asset-delete']
+  return ['web', 'version', 'asset-ready', 'jwt', 'keys', 'cors-rejection', 'models', 'agent-tool-call', 'openai-image', 'agent-continuation', 'gemini-image', 'asset-initialize', 'object-upload', 'asset-confirm', 'asset-list', 'object-download', 'asset-delete']
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

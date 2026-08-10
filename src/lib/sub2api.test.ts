@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { discoverSub2ApiModels, getSub2ApiImageBillingTier, getSub2ApiKeyLabel, isSub2ApiKeyUsable, loadSub2ApiIdentity, readKeyBinding, writeKeyBinding } from './sub2api'
+import { discoverSub2ApiModels, getSub2ApiImageBillingTier, getSub2ApiKeyLabel, isSub2ApiKeyUsable, loadSub2ApiIdentity, readKeyBinding, splitSub2ApiModels, writeKeyBinding } from './sub2api'
 
 describe('Sub2API identity and key bindings', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -31,10 +31,16 @@ describe('Sub2API identity and key bindings', () => {
     expect(fetchMock.mock.calls.every((call) => (call[1] as RequestInit).headers && ((call[1] as RequestInit).headers as Record<string, string>).Authorization === 'Bearer jwt')).toBe(true)
   })
 
-  it('discovers models independently through the protocol endpoint', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ models: [{ name: 'models/gemini-3-pro-image-preview' }] })))
-    await expect(discoverSub2ApiModels('https://sub.example', { id: 'k1', name: '', value: 'secret', group: '', status: 'active' }, 'gemini')).resolves.toEqual(['gemini-3-pro-image-preview'])
-    expect(fetchMock.mock.calls[0][0]).toBe('https://sub.example/v1beta/models')
+  it('discovers all models once through the OpenAI-compatible endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [
+      { id: 'gpt-image-2' },
+      { id: 'gemini-3-pro-image-preview' },
+    ] })))
+    const models = await discoverSub2ApiModels('https://sub.example', { id: 'k1', name: '', value: 'secret', group: '', status: 'active' })
+    expect(models).toEqual(['gpt-image-2', 'gemini-3-pro-image-preview'])
+    expect(splitSub2ApiModels(models)).toEqual({ openai: ['gpt-image-2'], gemini: ['gemini-3-pro-image-preview'] })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('https://sub.example/v1/models')
   })
 
   it('marks disabled, expired, and exhausted keys unusable', () => {
