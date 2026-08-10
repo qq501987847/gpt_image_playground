@@ -5,7 +5,11 @@ import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imag
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
+import { getGptImage2RequestSize } from '../lib/modelCapabilities'
+import { getSub2ApiImageBillingTier } from '../lib/sub2api'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { isDesktopRuntime } from '../lib/runtime'
+import { CLOUD_ASSETS_ENABLED } from '../lib/cloudAssets'
 import { CodeIcon, TransparentBgIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -308,8 +312,17 @@ export default function TaskCard({
   const qualityDisplay = getParamDisplay(task, 'quality')
   const showQuality = task.params.quality !== 'auto' || qualityDisplay.isMismatch
 
-  const sizeDisplay = getParamDisplay(task, 'size')
-  const showSize = task.params.size !== 'auto' || sizeDisplay.isMismatch
+  const gptImage2RequestSize = task.apiProvider === 'openai' && task.apiModel === 'gpt-image-2'
+    ? getGptImage2RequestSize(task.params)
+    : null
+  const sizeDisplay = getParamDisplay(task, 'size', gptImage2RequestSize && gptImage2RequestSize !== 'auto'
+    ? { ...task.actualParams, size: task.actualParams?.size ?? gptImage2RequestSize }
+    : task.actualParams)
+  const showSize = Boolean(gptImage2RequestSize && gptImage2RequestSize !== 'auto') || task.params.size !== 'auto' || sizeDisplay.isMismatch
+  const taskProfile = settings.profiles.find((profile) => profile.id === task.apiProfileId)
+  const billingTier = taskProfile?.keyId && gptImage2RequestSize && gptImage2RequestSize !== 'auto'
+    ? getSub2ApiImageBillingTier(gptImage2RequestSize)
+    : null
 
   const formatDisplay = getParamDisplay(task, 'output_format')
   const showFormat = task.params.output_format !== 'png' || formatDisplay.isMismatch
@@ -323,9 +336,9 @@ export default function TaskCard({
   const outputSuccessCount = task.outputImages?.length ?? 0
   const requestedOutputCount = Math.max(task.params.n, outputSuccessCount + outputErrorCount)
   const hasPartialOutputFailure = task.status === 'done' && outputErrorCount > 0
-  const availableCloudCopy = task.cloudCopies?.find((copy) => copy.status === 'available')
-  const failedCloudCopy = task.cloudCopies?.find((copy) => copy.status === 'local-only')
-  const cloudUploading = task.cloudCopies?.some((copy) => copy.status === 'uploading')
+  const availableCloudCopy = CLOUD_ASSETS_ENABLED ? task.cloudCopies?.find((copy) => copy.status === 'available') : undefined
+  const failedCloudCopy = CLOUD_ASSETS_ENABLED ? task.cloudCopies?.find((copy) => copy.status === 'local-only') : undefined
+  const cloudUploading = CLOUD_ASSETS_ENABLED && task.cloudCopies?.some((copy) => copy.status === 'uploading')
 
   const defaultModelForProvider = DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
@@ -625,8 +638,13 @@ export default function TaskCard({
               )}
               {showSize && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
-                  <span className="text-gray-400 dark:text-gray-500">尺寸</span>
-                  {sizeDisplay.isMismatch ? <ActualValueBadge value={sizeDisplay.displayValue} className="px-1 rounded-sm" /> : <span className="text-gray-600 dark:text-gray-300">{sizeDisplay.displayValue}</span>}
+                  <span className="text-gray-400 dark:text-gray-500">请求</span>
+                  <span className="text-gray-600 dark:text-gray-300">{gptImage2RequestSize && gptImage2RequestSize !== 'auto' ? gptImage2RequestSize.replace('x', '×') : sizeDisplay.displayValue}</span>
+                </span>
+              )}
+              {billingTier && (
+                <span className="flex-shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600 dark:bg-white/[0.04] dark:text-gray-300">
+                  计费 {billingTier}
                 </span>
               )}
               {showFormat && (
@@ -679,7 +697,7 @@ export default function TaskCard({
                   </TaskActionButton>
                 </>
               )}
-              {((task.status === 'error' && !isFalReconnecting) || settings.alwaysShowRetryButton) && (
+              {((task.status === 'error' && !isFalReconnecting) || (isDesktopRuntime && settings.alwaysShowRetryButton)) && (
                 <TaskActionButton
                   tooltip="重试任务"
                   onClick={() => retryTask(task)}

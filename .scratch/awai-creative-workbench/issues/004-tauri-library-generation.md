@@ -1,6 +1,6 @@
 # 004：Tauri 桌面素材库与端到端生成
 
-状态：`open`
+状态：`closed`
 
 标签：`ready-for-agent`
 
@@ -58,5 +58,5 @@
 
 ## Closure evidence
 
-- Commit: pending
-- Status: ready for close after commit hash is recorded.
+- Commit: `be4a946`
+- Status: closed after the focused commit and verification gates passed.

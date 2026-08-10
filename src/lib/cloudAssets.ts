@@ -5,6 +5,9 @@ import { getSub2ApiSession } from './sub2apiSession'
 const MAX_ORIGINAL_BYTES = 30 * 1024 * 1024
 const serviceUrl = (import.meta.env.VITE_AWAI_ASSET_SERVICE_URL || '').replace(/\/+$/, '')
 
+// 云端素材流程尚未正式开放，统一关闭上传和相关界面。
+export const CLOUD_ASSETS_ENABLED = false
+
 interface CloudAssetResponse {
   asset: {
     id: string
@@ -14,6 +17,13 @@ interface CloudAssetResponse {
     kind: 'original' | 'thumbnail'
     url: string
     mediaType: string
+  }>
+}
+
+interface CloudAssetListResponse {
+  assets: Array<{
+    id: string
+    downloads?: { original?: string }
   }>
 }
 
@@ -109,11 +119,16 @@ export async function deleteCloudAsset(id: string) {
   await serviceRequest(`/v1/assets/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+export async function deleteAllStoredCloudAssets() {
+  const result = await serviceRequest<CloudAssetListResponse>('/v1/assets')
+  await Promise.all(result.assets.map((asset) => deleteCloudAsset(asset.id)))
+}
+
 export async function getCloudAssetDownload(id: string) {
-  const result = await serviceRequest<{ assets: Array<{ id: string; downloads?: { original?: string } }> }>('/v1/assets')
+  const result = await serviceRequest<CloudAssetListResponse>('/v1/assets')
   return result.assets.find((asset) => asset.id === id)?.downloads?.original ?? null
 }
 
 export function isCloudAssetsConfigured() {
-  return Boolean(serviceUrl)
+  return CLOUD_ASSETS_ENABLED && Boolean(serviceUrl)
 }

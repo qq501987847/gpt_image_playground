@@ -1,6 +1,7 @@
 import type { AgentConversation, AgentInputDraft, AppMode, AppSettings, FavoriteCollection, InputImage, MaskDraft, TaskParams } from '../types'
-import { normalizeSettings } from './apiProfiles'
+import { getActiveApiProfile, normalizeSettings } from './apiProfiles'
 import { normalizeAgentConversations } from './agentConversationState'
+import { getModelParamsKey, normalizeParamsForModel } from './modelCapabilities'
 import { ensureDefaultFavoriteCollection, normalizeFavoriteCollections, resolveDefaultFavoriteCollectionId } from './favoriteState'
 import { cleanStaleAgentInputDrafts, getPersistableAgentInputDrafts, isEmptyAgentInputDraft, normalizeAgentInputDraft, normalizeAgentInputDrafts, normalizeAgentInputDraftsByKey, saveGalleryInputDraft } from './inputDraftState'
 import { getPersistableAgentConversations, stripPersistedAgentConversations } from './agentResponseState'
@@ -8,6 +9,7 @@ import { getPersistableAgentConversations, stripPersistedAgentConversations } fr
 export interface PersistedAppState {
   settings: AppSettings
   params: TaskParams
+  paramsByModel?: Record<string, TaskParams>
   prompt?: string
   inputImages?: InputImage[]
   dismissedCodexCliPrompts: string[]
@@ -82,6 +84,7 @@ function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
     output_compression: value.output_compression === null || (typeof value.output_compression === 'number' && Number.isFinite(value.output_compression))
       ? value.output_compression
       : fallback.output_compression,
+    background: value.background === 'opaque' || value.background === 'auto' ? value.background : fallback.background,
     moderation: value.moderation === 'auto' || value.moderation === 'low' ? value.moderation : fallback.moderation,
     n: typeof value.n === 'number' && Number.isFinite(value.n) ? value.n : fallback.n,
     transparent_output: typeof value.transparent_output === 'boolean' ? value.transparent_output : fallback.transparent_output,
@@ -98,6 +101,7 @@ export function createPersistedState(state: PersistedStateSource, includeLegacyA
   return {
     settings,
     params: state.params,
+    paramsByModel: state.paramsByModel,
     ...(settings.persistInputOnRestart && (state.appMode === 'gallery' || galleryInputDraft)
       ? {
           prompt: galleryInputDraft?.prompt ?? '',
@@ -141,6 +145,19 @@ export function normalizePersistedState(
   if (!isRecord(persistedState)) return null
 
   const settings = normalizeSettings(persistedState.settings ?? fallback.settings)
+  const params = normalizeParams(persistedState.params, fallback.params)
+  const storedParamsByModel = isRecord(persistedState.paramsByModel)
+    ? Object.fromEntries(
+        Object.entries(persistedState.paramsByModel).map(([key, value]) => [key, normalizeParams(value, params)]),
+      )
+    : {}
+  const activeProfile = getActiveApiProfile(settings)
+  const activeParamsKey = getModelParamsKey(activeProfile)
+  const paramsByModel = {
+    ...storedParamsByModel,
+    ...(storedParamsByModel[activeParamsKey] ? {} : { [activeParamsKey]: params }),
+  }
+  paramsByModel[activeParamsKey] = normalizeParamsForModel(paramsByModel[activeParamsKey] ?? params, activeProfile)
   const hasLegacyAgentConversations = Array.isArray(persistedState.agentConversations)
   const agentConversations = hasLegacyAgentConversations
     ? normalizeAgentConversations(persistedState.agentConversations)
@@ -189,7 +206,8 @@ export function normalizePersistedState(
   return {
     state: {
       settings,
-      params: normalizeParams(persistedState.params, fallback.params),
+      params: paramsByModel[activeParamsKey] ?? params,
+      paramsByModel,
       dismissedCodexCliPrompts: normalizeStringArray(persistedState.dismissedCodexCliPrompts, fallback.dismissedCodexCliPrompts),
       appMode,
       galleryInputDraft: galleryInputDraft && !isEmptyAgentInputDraft(galleryInputDraft) ? galleryInputDraft : null,

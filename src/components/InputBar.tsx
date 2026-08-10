@@ -10,21 +10,26 @@ import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, 
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
+import { getGptImage2RequestSize, getModelCapability, modelSupportsField } from '../lib/modelCapabilities'
+import { getSub2ApiImageBillingTier } from '../lib/sub2api'
+import { isDesktopRuntime } from '../lib/runtime'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds } from '../lib/favoriteState'
 import { getContentEditableCursor, getContentEditablePlainText, getContentEditableSelection, getMentionTagHtml, setContentEditableCursor, setContentEditableSelection, syncMentionTagSelection } from '../lib/contentEditableMentions'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
 import SizePickerModal from './SizePickerModal'
-import { CloseIcon, CollapseIcon, ExpandIcon } from './icons'
+import { CloseIcon, CollapseIcon, ExpandIcon, PlusIcon } from './icons'
 import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
 import InputParamsPanel from './input/inputParamsPanel'
+import AgentModelSelector from './input/agentModelSelector'
+import ModelSelector from './input/modelSelector'
 
 /** API 支持的最大参考图数量 */
 const API_MAX_IMAGES = 16
-const PROMPT_PANEL_HEIGHT = 96
+const PROMPT_PANEL_HEIGHT = 132
 
 function getFavoriteCollectionTasksForBatch(collectionId: string, tasks: TaskRecord[], defaultFavoriteCollectionId: string | null) {
   const favoriteTasks = tasks.filter((task) => task.isFavorite)
@@ -94,6 +99,7 @@ export default function InputBar() {
   const params = useStore((s) => s.params)
   const setParams = useStore((s) => s.setParams)
   const settings = useStore((s) => s.settings)
+  const setSettings = useStore((s) => s.setSettings)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
@@ -315,10 +321,12 @@ export default function InputBar() {
   const textareaRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef<HTMLDivElement>(null)
+  const paramsMenuRef = useRef<HTMLDivElement>(null)
 
   const [isDragging, setIsDragging] = useState(false)
   const [promptExpanded, setPromptExpanded] = useState(false)
   const [promptExpandedTop, setPromptExpandedTop] = useState(0)
+  const [agentChatColumn, setAgentChatColumn] = useState<{ left: number; width: number } | null>(null)
   const [promptCanExpand, setPromptCanExpand] = useState(false)
   const [clearPromptHover, setClearPromptHover] = useState(false)
   const [expandPromptHover, setExpandPromptHover] = useState(false)
@@ -328,6 +336,8 @@ export default function InputBar() {
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
   const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
+  const [showParamsPopover, setShowParamsPopover] = useState(false)
+  const [showAgentModelSelector, setShowAgentModelSelector] = useState(false)
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
   const [imageDragIndex, setImageDragIndex] = useState<number | null>(null)
   const [imageDragOverIndex, setImageDragOverIndex] = useState<number | null>(null)
@@ -348,6 +358,16 @@ export default function InputBar() {
   const [cursorPos, setCursorPos] = useState(0)
   const [menuLeft, setMenuLeft] = useState(0)
   const showPromptExpand = promptExpanded || promptCanExpand
+
+  useEffect(() => {
+    if (!showParamsPopover) return
+    const closeIfOutside = (event: PointerEvent) => {
+      if (paramsMenuRef.current?.contains(event.target as Node)) return
+      setShowParamsPopover(false)
+    }
+    document.addEventListener('pointerdown', closeIfOutside, true)
+    return () => document.removeEventListener('pointerdown', closeIfOutside, true)
+  }, [showParamsPopover])
 
   const updateInputBarClearance = useCallback(() => {
     const bar = cardRef.current?.closest<HTMLElement>('[data-input-bar]')
@@ -380,6 +400,37 @@ export default function InputBar() {
       document.documentElement.style.removeProperty('--input-bar-clearance')
     }
   }, [updateInputBarClearance])
+
+  useLayoutEffect(() => {
+    if (appMode !== 'agent') {
+      setAgentChatColumn(null)
+      return
+    }
+
+    const column = document.querySelector<HTMLElement>('[data-agent-chat-column]')
+    if (!column) return
+
+    const updateColumn = () => {
+      if (window.innerWidth < 1024) {
+        setAgentChatColumn(null)
+        return
+      }
+      const rect = column.getBoundingClientRect()
+      const width = Math.round(Math.min(896, rect.width))
+      const left = Math.round(rect.left + (rect.width - width) / 2)
+      setAgentChatColumn((current) => current?.left === left && current.width === width ? current : { left, width })
+    }
+    const frame = window.requestAnimationFrame(updateColumn)
+    const observer = new ResizeObserver(updateColumn)
+    observer.observe(column)
+    window.addEventListener('resize', updateColumn)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+      window.removeEventListener('resize', updateColumn)
+    }
+  }, [appMode])
 
   useLayoutEffect(() => {
     if (!promptExpanded) return
@@ -416,7 +467,7 @@ export default function InputBar() {
       : settingsActiveProfile
   ), [appMode, settings, settingsActiveProfile])
   const activeProfile = useMemo(() => (
-    appMode !== 'agent' && settings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId
+    isDesktopRuntime && appMode !== 'agent' && settings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId
       ? settings.profiles.find((profile) => profile.id === reusedTaskApiProfileId) ?? currentActiveProfile
       : currentActiveProfile
   ), [appMode, currentActiveProfile, reusedTaskApiProfileId, settings])
@@ -436,7 +487,11 @@ export default function InputBar() {
     : hasSubmitApiConfig
     ? maskDraft ? '遮罩编辑' : '生成图像'
     : '请先配置 API'
-  const submitTooltipText = activeAgentIsRunning ? '停止生成' : '尚未完成 API 配置，请在右上角设置中进行'
+  const submitTooltipText = activeAgentIsRunning
+    ? '停止生成'
+    : isDesktopRuntime
+      ? '尚未完成 API 配置，请在右上角设置中进行'
+      : '尚未完成模型配置，请在当前页面选择分组和模型'
   const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
@@ -462,9 +517,6 @@ export default function InputBar() {
   const isGeminiProvider = activeProvider === 'gemini'
   const agentAutoImageCount = appMode === 'agent'
   const moderationDisabled = isFalProvider
-  const transparentOutputAvailable = appMode === 'gallery'
-  const showTransparentOutputControl = transparentOutputAvailable && params.output_format === 'png'
-  const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
   const compressionDisabled = params.output_format === 'png' || isFalProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
@@ -494,16 +546,16 @@ export default function InputBar() {
       ]
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
-  const transparentOutputHint = useHintTooltip()
-  const handleTransparentOutputMenuOpenChange = useCallback((open: boolean) => {
-    if (open) transparentOutputHint.hide()
-  }, [transparentOutputHint.hide])
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
   const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
   const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage || activeProfile.codexCli })
   const qualityHint = useHintTooltip({ enabled: () => activeProfile.codexCli || isFalProvider })
   const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
   const streamConcurrentHint = useHintTooltip({ enabled: () => streamConcurrentByN })
+
+  useEffect(() => {
+    if (params.transparent_output) setParams({ transparent_output: false })
+  }, [params.transparent_output, setParams])
   const maskTargetImage = maskDraft
     ? inputImages.find((img) => img.id === maskDraft.targetImageId) ?? null
     : null
@@ -729,13 +781,20 @@ export default function InputBar() {
       setNInput('auto')
       return
     }
-    setNInput(value)
-    const nextValue = Number(value)
-    if (!Number.isNaN(nextValue) && nextValue > outputImageLimit) {
-      showNLimitHint()
-    } else {
+
+    if (value === '') {
+      setNInput(value)
       hideNLimitHint()
+      return
     }
+
+    if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > outputImageLimit) {
+      showNLimitHint()
+      return
+    }
+
+    setNInput(String(Number(value)))
+    hideNLimitHint()
   }, [agentAutoImageCount, hideNLimitHint, outputImageLimit, showNLimitHint])
 
   const handleNLimitIncreaseAttempt = useCallback((preventDefault: () => void) => {
@@ -1472,7 +1531,7 @@ export default function InputBar() {
     )
   }
 
-  const renderParams = (cols: string) => (
+  const renderParams = (cols: string, options?: { advancedOnly?: boolean, showAdvanced?: boolean, panel?: boolean }) => (
     <InputParamsPanel
       cols={cols}
       params={params}
@@ -1484,11 +1543,6 @@ export default function InputBar() {
       displaySize={displaySize}
       qualityOptions={qualityOptions}
       selectClass={selectClass}
-      transparentOutputAvailable={transparentOutputAvailable}
-      showTransparentOutputControl={showTransparentOutputControl}
-      transparentOutputEnabled={transparentOutputEnabled}
-      transparentOutputHint={transparentOutputHint}
-      onTransparentOutputMenuOpenChange={handleTransparentOutputMenuOpenChange}
       compressionHint={compressionHint}
       compressionDisabled={compressionDisabled}
       outputCompressionInput={outputCompressionInput}
@@ -1514,8 +1568,49 @@ export default function InputBar() {
       sizeHint={sizeHint}
       qualityHint={qualityHint}
       onOpenSizePicker={() => setShowSizePicker(true)}
+      advancedOnly={options?.advancedOnly}
+      showAdvanced={options?.showAdvanced}
+      panel={options?.panel}
     />
   )
+
+  const renderModelSelector = () => appMode === 'gallery' && (
+    <ModelSelector
+      settingsProfiles={settings.profiles}
+      activeProfile={settingsActiveProfile}
+      onSelectProfile={() => undefined}
+      onProfilesChange={(profiles, activeProfileId) => setSettings({ profiles, activeProfileId })}
+    />
+  )
+  const renderCompactModelSelector = () => appMode === 'gallery' && (
+    <ModelSelector
+      compact
+      settingsProfiles={settings.profiles}
+      activeProfile={settingsActiveProfile}
+      onSelectProfile={() => undefined}
+      onProfilesChange={(profiles, activeProfileId) => setSettings({ profiles, activeProfileId })}
+    />
+  )
+  const modelCapability = getModelCapability(activeProfile.provider, activeProfile.model, activeProfile.apiMode)
+  const gptImage2RequestSize = activeProfile.provider === 'openai' && activeProfile.model === 'gpt-image-2'
+    ? getGptImage2RequestSize(params)
+    : null
+  const gptImage2AspectRatio = activeProfile.provider === 'openai' && activeProfile.model === 'gpt-image-2' && (!params.geminiAspectRatio || params.geminiAspectRatio === 'auto')
+    ? '1:1'
+    : params.geminiAspectRatio
+  const gptImage2BillingTier = activeProfile.keyId && gptImage2RequestSize && gptImage2RequestSize !== 'auto'
+    ? getSub2ApiImageBillingTier(gptImage2RequestSize)
+    : null
+  const paramsSummaryValues = [
+    modelSupportsField(modelCapability, 'geminiAspectRatio') && (gptImage2AspectRatio === 'auto' ? '自动' : gptImage2AspectRatio),
+    modelSupportsField(modelCapability, 'size') && !modelCapability.aspectRatios && displaySize,
+    modelSupportsField(modelCapability, 'geminiImageSize') && (params.geminiImageSize === 'auto'
+      ? '自动'
+      : `${params.geminiImageSize}${gptImage2RequestSize && gptImage2RequestSize !== 'auto' ? ` ${gptImage2RequestSize.replace('x', '×')}` : ''}${gptImage2BillingTier && gptImage2BillingTier !== params.geminiImageSize ? ` · 按${gptImage2BillingTier}计费` : ''}`),
+    modelSupportsField(modelCapability, 'quality') && (params.quality === 'auto' ? '自动' : params.quality === 'low' ? '低' : params.quality === 'medium' ? '中' : '高'),
+    (isGeminiProvider || modelSupportsField(modelCapability, 'n')) && `${params.n}张`,
+  ].filter((value): value is string => Boolean(value))
+  const paramsSummary = paramsSummaryValues.join(' · ')
 
   const showFavoriteCollectionBatchBar = inCollectionOverview && selectedFavoriteCollectionIds.length > 0
   const showTaskBatchBar = !showFavoriteCollectionBatchBar && selectedTaskIds.length > 0
@@ -1536,8 +1631,11 @@ export default function InputBar() {
 
       <div
         data-input-bar
-        className={`fixed bottom-[max(1rem,var(--safe-area-bottom))] sm:bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-4xl px-3 sm:px-4 transition-all duration-300${promptExpanded ? ' flex flex-col' : ''}`}
-        style={promptExpanded ? { top: `${promptExpandedTop}px`, transitionProperty: 'none' } : undefined}
+        className={`fixed bottom-[max(1rem,var(--safe-area-bottom))] z-30 px-3 sm:bottom-6 sm:px-4 ${agentChatColumn ? '' : 'left-1/2 w-full max-w-4xl -translate-x-1/2'}${promptExpanded ? ' flex flex-col' : ''}`}
+        style={agentChatColumn || promptExpanded ? {
+          ...(agentChatColumn ? { left: `${agentChatColumn.left}px`, width: `${agentChatColumn.width}px`, transform: 'none' } : {}),
+          ...(promptExpanded ? { top: `${promptExpandedTop}px`, transitionProperty: 'none' } : {}),
+        } : undefined}
       >
         <InputBatchBars
           showFavoriteCollectionBatchBar={showFavoriteCollectionBatchBar}
@@ -1595,7 +1693,7 @@ export default function InputBar() {
           {/* 输入框 */}
           <div
             className={`relative${promptExpanded ? ' min-h-0 flex-1' : ''}`}
-            style={{ height: promptExpanded ? '100%' : `${PROMPT_PANEL_HEIGHT}px` }}
+            style={{ height: promptExpanded ? '100%' : `${isMobile ? PROMPT_PANEL_HEIGHT : 148}px` }}
           >
             {showAtImageMenu && (
               <div style={{ left: `${menuLeft}px` }} className="absolute bottom-full z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
@@ -1669,10 +1767,10 @@ export default function InputBar() {
                 syncMentionTagSelection(el)
               }}
               aria-label={promptPlaceholder}
-              className="h-full w-full overflow-y-auto overscroll-contain ios-rounded-scroll-fix custom-scrollbar whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pb-12 pl-14 pr-24 pt-1.5 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
+              className="h-[calc(100%-3rem)] w-full overflow-y-auto overscroll-contain ios-rounded-scroll-fix custom-scrollbar whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pb-3 pl-3 pr-20 pt-1.5 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
             />
             {prompt.length === 0 && (
-              <div className="prompt-placeholder pointer-events-none absolute inset-0 truncate pb-12 pl-14 pr-24 pt-1.5 text-sm leading-relaxed text-gray-400 dark:text-gray-500">
+              <div className="prompt-placeholder pointer-events-none absolute inset-x-0 top-0 bottom-11 truncate pl-3 pr-20 pt-1.5 text-sm leading-relaxed text-gray-400 dark:text-gray-500">
                 {promptPlaceholder}
               </div>
             )}
@@ -1724,7 +1822,7 @@ export default function InputBar() {
             </div>
 
             <div
-              className="absolute bottom-2 left-2 z-20"
+              className="hidden"
               onMouseEnter={() => setAttachHover(true)}
               onMouseLeave={() => setAttachHover(false)}
             >
@@ -1802,7 +1900,7 @@ export default function InputBar() {
             </div>
 
             <div
-              className="absolute bottom-2 right-2 z-20"
+              className="hidden"
               onMouseEnter={() => setSubmitHover(true)}
               onMouseLeave={() => setSubmitHover(false)}
             >
@@ -1833,17 +1931,42 @@ export default function InputBar() {
             </div>
           </div>
 
-          {/* 参数 */}
-          <div className="mt-3">
-            <div className="hidden sm:block">
-              {renderParams('grid-cols-6')}
+          <div className="absolute bottom-1 left-2 right-2 z-50 flex min-w-0 items-center gap-1.5">
+            <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-200 text-gray-500 shadow-sm transition-transform active:scale-[0.96] dark:bg-white/[0.06] dark:text-gray-300" aria-label="上传图片"><PlusIcon className="h-5 w-5" /></button>
+            {appMode === 'gallery' && <div className="min-w-0 shrink-0">{renderCompactModelSelector()}</div>}
+            {appMode === 'agent' && <AgentModelSelector
+              open={showAgentModelSelector}
+              onOpenChange={(open) => {
+                setShowAgentModelSelector(open)
+                if (open) setShowParamsPopover(false)
+              }}
+            />}
+            <span className="h-6 w-px shrink-0 bg-gray-200 dark:bg-white/[0.12]" />
+            <div ref={paramsMenuRef} className="relative min-w-0 shrink">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAgentModelSelector(false)
+                  setShowParamsPopover(true)
+                }}
+                className="flex h-10 max-w-72 items-center rounded-xl border border-gray-200/60 bg-white/70 px-3 text-left text-xs text-gray-600 shadow-sm transition-transform active:scale-[0.96] dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
+                aria-label="打开生成参数"
+              >
+                <span className="hidden truncate sm:inline">{paramsSummary}</span>
+                <span className="sm:hidden">参数</span>
+              </button>
+              {showParamsPopover && <section className="absolute bottom-full left-0 z-50 mb-2 hidden max-h-[min(31rem,calc(100vh-10rem))] w-[26rem] overflow-y-auto rounded-xl border border-gray-200/70 bg-white p-3 shadow-xl ring-1 ring-black/5 sm:block dark:border-white/[0.08] dark:bg-gray-950 dark:ring-white/10">
+                {renderParams('grid-cols-2 sm:grid-cols-3', { panel: true })}
+              </section>}
             </div>
-            <div className={`sm:hidden collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
-              <div className="collapse-inner">
-                {renderParams('grid-cols-2')}
-              </div>
-            </div>
+            <button type="button" onClick={() => hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)} disabled={hasSubmitApiConfig && !canSubmit} className="ml-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500 text-white transition-transform active:scale-[0.96] disabled:bg-gray-300" aria-label={submitButtonAriaLabel}>→</button>
           </div>
+
+          {showParamsPopover && <>
+            <section className="absolute bottom-12 left-0 z-50 max-h-[min(31rem,calc(100vh-10rem))] w-full overflow-y-auto rounded-xl border border-gray-200/70 bg-white p-3 shadow-xl ring-1 ring-black/5 sm:hidden dark:border-white/[0.08] dark:bg-gray-950 dark:ring-white/10">
+              {renderParams('grid-cols-2 sm:grid-cols-3', { panel: true })}
+            </section>
+          </>}
 
           <input
             ref={fileInputRef}

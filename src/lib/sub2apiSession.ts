@@ -13,8 +13,69 @@ interface Sub2ApiSessionState {
 }
 
 const releaseMode = import.meta.env.VITE_AWAI_RELEASE_MODE === 'true'
+// 本地开发默认使用内存模拟数据，设置为 false 后恢复真实 iframe JWT 请求。
+const devMockEnabled = import.meta.env.DEV && !releaseMode && import.meta.env.VITE_AWAI_SUB2API_MOCK !== 'false'
+
+const devMockKeys: Sub2ApiKey[] = [
+  {
+    id: 'dev-key-pro-primary',
+    name: '开发主 Key',
+    value: 'dev-mock-key-primary',
+    group: 'Pro',
+    status: 'active',
+    remaining: 100000,
+  },
+  {
+    id: 'dev-key-pro-secondary',
+    name: '开发备用 Key',
+    value: 'dev-mock-key-secondary',
+    group: 'Pro',
+    status: 'active',
+    remaining: 50000,
+  },
+  {
+    id: 'dev-key-gemini',
+    name: '开发 Gemini Key',
+    value: 'dev-mock-key-gemini',
+    group: 'Gemini',
+    status: 'active',
+    remaining: 20000,
+  },
+]
+
+const devMockModels: Record<string, { openai: string[], gemini: string[] }> = {
+  'dev-key-pro-primary': {
+    openai: ['gpt-image-2', 'gpt-5.6-sol', 'gpt-4.1'],
+    gemini: ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'],
+  },
+  'dev-key-pro-secondary': {
+    openai: ['gpt-image-2', 'gpt-4o', 'gpt-4.1-mini'],
+    gemini: ['gemini-3-pro-image-preview'],
+  },
+  'dev-key-gemini': {
+    openai: ['gpt-4.1-mini'],
+    gemini: ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'gemini-2.5-flash-image'],
+  },
+}
+
+function createDevMockContext(): IframeBootstrapContext {
+  return {
+    userId: 'dev-user',
+    token: 'dev-menu-jwt',
+    origin: window.location.origin,
+    theme: null,
+    lang: 'zh',
+    uiMode: 'dev-mock',
+    srcUrl: null,
+  }
+}
+
+function getDevMockModels(keyId: string, provider: 'openai' | 'gemini') {
+  return devMockModels[keyId]?.[provider] ?? []
+}
+
 let state: Sub2ApiSessionState = {
-  status: releaseMode && !isDesktopRuntime ? 'loading' : 'standalone',
+  status: devMockEnabled ? 'loading' : releaseMode && !isDesktopRuntime ? 'loading' : 'standalone',
   context: null,
   user: null,
   keys: [],
@@ -41,6 +102,17 @@ export async function initializeSub2ApiSession() {
         group: '',
         status: credential.available ? 'active' : 'missing',
       })),
+      error: null,
+    })
+    return state
+  }
+  if (devMockEnabled) {
+    const context = createDevMockContext()
+    setState({
+      status: 'ready',
+      context,
+      user: { id: 'dev-user', name: '本地开发用户' },
+      keys: devMockKeys,
       error: null,
     })
     return state
@@ -98,6 +170,10 @@ export async function hydrateSub2ApiProfiles(profiles: ApiProfile[]) {
 }
 
 export async function bindSub2ApiProfile(profile: ApiProfile, keyId: string | null) {
+  if (devMockEnabled) {
+    const key = devMockKeys.find((item) => item.id === keyId && isSub2ApiKeyUsable(item))
+    return { ...profile, baseUrl: window.location.origin, keyId: key?.id ?? null, apiKey: key?.value ?? '' }
+  }
   if (isDesktopRuntime) {
     const baseUrl = await invokeDesktop<string>('desktop_base_url')
     const apiKey = keyId ? await appRuntime.credentials.get(keyId) ?? '' : ''
@@ -110,6 +186,7 @@ export async function bindSub2ApiProfile(profile: ApiProfile, keyId: string | nu
 }
 
 export async function discoverProfileModels(profile: ApiProfile) {
+  if (devMockEnabled) return getDevMockModels(profile.keyId ?? '', profile.provider === 'gemini' ? 'gemini' : 'openai')
   if (isDesktopRuntime) {
     if (!profile.keyId) throw new Error('请先选择可用凭据')
     const value = await appRuntime.credentials.get(profile.keyId)
@@ -121,6 +198,39 @@ export async function discoverProfileModels(profile: ApiProfile) {
   const key = state.keys.find((item) => item.id === profile.keyId && isSub2ApiKeyUsable(item))
   if (!key) throw new Error('请先选择可用 Key')
   return discoverSub2ApiModels(state.context.origin, key, profile.provider)
+}
+
+export async function discoverModelsForKey(keyId: string) {
+  if (devMockEnabled) {
+    await new Promise((resolve) => window.setTimeout(resolve, 140))
+    return { openai: getDevMockModels(keyId, 'openai'), gemini: getDevMockModels(keyId, 'gemini'), errors: {} }
+  }
+  const getKey = async (): Promise<Sub2ApiKey> => {
+    if (isDesktopRuntime) {
+      const value = await appRuntime.credentials.get(keyId)
+      if (!value) throw new Error('凭据缺失，需要重新绑定')
+      return { id: keyId, name: '', value, group: '', status: 'active' }
+    }
+    const key = state.keys.find((item) => item.id === keyId && isSub2ApiKeyUsable(item))
+    if (!key) throw new Error('请先选择可用 Key')
+    return key
+  }
+
+  const key = await getKey()
+  const origin = isDesktopRuntime ? await invokeDesktop<string>('desktop_base_url') : state.context?.origin
+  if (!origin) throw new Error('Sub2API 会话未就绪')
+  const [openai, gemini] = await Promise.allSettled([
+    discoverSub2ApiModels(origin, key, 'openai'),
+    discoverSub2ApiModels(origin, key, 'gemini'),
+  ])
+  return {
+    openai: openai.status === 'fulfilled' ? openai.value : [],
+    gemini: gemini.status === 'fulfilled' ? gemini.value : [],
+    errors: {
+      ...(openai.status === 'rejected' ? { openai: openai.reason instanceof Error ? openai.reason.message : String(openai.reason) } : {}),
+      ...(gemini.status === 'rejected' ? { gemini: gemini.reason instanceof Error ? gemini.reason.message : String(gemini.reason) } : {}),
+    },
+  }
 }
 
 export async function addDesktopCredential(label: string, value: string) {

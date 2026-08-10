@@ -47,6 +47,12 @@ class MemoryObjects implements ObjectStore {
   }
   async createDownloadUrl(file: AssetFile) { return `https://objects.example/download/${file.objectKey}` }
   async stat(objectKey: string) { return this.files.get(objectKey) ?? null }
+  async finalize(file: AssetFile, objectKey: string) {
+    const actual = this.files.get(file.objectKey)
+    if (!actual) throw new Error('上传对象不存在')
+    this.files.set(objectKey, actual)
+    return { ...file, ...actual, objectKey }
+  }
   async remove(objectKeys: string[]) {
     this.removed.push(objectKeys)
     for (const key of objectKeys) this.files.delete(key)
@@ -70,8 +76,8 @@ describe('online asset service', () => {
 
     expect(result.record.expiresAt.getTime()).toBe(now.getTime() + RETENTION_MS)
     expect(result.uploads).toEqual([
-      expect.objectContaining({ kind: 'original', objectKey: 'temporary/record-1/original' }),
-      expect.objectContaining({ kind: 'thumbnail', objectKey: 'temporary/record-1/thumbnail' }),
+      expect.objectContaining({ kind: 'original', objectKey: 'temporary/record-1/upload/original' }),
+      expect.objectContaining({ kind: 'thumbnail', objectKey: 'temporary/record-1/upload/thumbnail' }),
     ])
     expect(objects.uploadValidSeconds).toEqual([UPLOAD_URL_SECONDS, UPLOAD_URL_SECONDS])
   })
@@ -99,6 +105,9 @@ describe('online asset service', () => {
     objects.files.set(initialized.record.original.objectKey, input.original)
     const confirmed = await service.confirm(identity, initialized.record.id)
     expect(confirmed.status).toBe('available')
+    expect(confirmed.original.objectKey).toBe('temporary/record-1/available/original')
+    expect(confirmed.thumbnail?.objectKey).toBe('temporary/record-1/available/thumbnail')
+    expect(objects.files.has(initialized.record.original.objectKey)).toBe(false)
     await expect(service.confirm(identity, initialized.record.id)).resolves.toEqual(confirmed)
   })
 
@@ -114,7 +123,12 @@ describe('online asset service', () => {
     expect(listed[0]).toMatchObject({ downloads: { original: expect.stringContaining('/download/'), thumbnail: expect.stringContaining('/download/') } })
     await service.delete(identity, initialized.record.id)
     expect(repository.records.size).toBe(0)
-    expect(objects.removed[0]).toEqual(['temporary/record-1/original', 'temporary/record-1/thumbnail'])
+    expect(objects.removed.at(-1)).toEqual([
+      'temporary/record-1/available/original',
+      'temporary/record-1/available/thumbnail',
+      'temporary/record-1/upload/original',
+      'temporary/record-1/upload/thumbnail',
+    ])
   })
 
   it('compensates abandoned and expired records idempotently and releases their quota', async () => {

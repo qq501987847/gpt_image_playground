@@ -168,21 +168,6 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
           )}
         </div>
 
-        <div className="pt-4 border-t border-gray-200 dark:border-white/[0.08] flex justify-center">
-          <a
-            href={import.meta.env.VITE_AWAI_SUPPORT_URL || '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors group"
-          >
-            <svg className="w-5 h-5 group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <path d="M12 17h.01" />
-            </svg>
-            官方支持
-          </a>
-        </div>
       </div>
     </div>,
     document.body

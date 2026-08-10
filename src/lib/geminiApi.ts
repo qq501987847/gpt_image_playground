@@ -1,5 +1,6 @@
 import type { ApiProfile, TaskParams } from '../types'
 import type { CallApiOptions, CallApiResult } from './imageApiShared'
+import { getGeminiRequestParams } from './modelCapabilities'
 
 type GeminiPart = { text: string } | { inlineData: { mimeType: string, data: string } }
 
@@ -15,10 +16,13 @@ function getErrorMessage(payload: unknown, fallback: string) {
   return typeof error?.message === 'string' ? error.message : fallback
 }
 
-export function buildGeminiRequest(prompt: string, params: TaskParams, inputImageDataUrls: string[]) {
-  const imageConfig: Record<string, string> = {}
-  if (params.geminiAspectRatio && params.geminiAspectRatio !== 'auto') imageConfig.aspectRatio = params.geminiAspectRatio
-  if (params.geminiImageSize && params.geminiImageSize !== 'auto') imageConfig.imageSize = params.geminiImageSize
+export function buildGeminiRequest(
+  prompt: string,
+  params: TaskParams,
+  inputImageDataUrls: string[],
+  profile: Pick<ApiProfile, 'provider' | 'model' | 'apiMode'> = { provider: 'gemini', model: 'gemini-3.1-flash-image-preview', apiMode: 'images' },
+) {
+  const imageConfig = getGeminiRequestParams(params, profile)
   return {
     contents: [{ role: 'user', parts: [{ text: prompt }, ...inputImageDataUrls.map(getDataUrlPart)] }],
     ...(Object.keys(imageConfig).length ? { generationConfig: { imageConfig } } : {}),
@@ -43,7 +47,7 @@ export function parseGeminiResponse(payload: unknown): CallApiResult {
   return { images, revisedPrompts: images.map(() => revisedPrompts.join('\n') || undefined) }
 }
 
-export async function callGeminiImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+async function callGeminiImageApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const baseUrl = profile.baseUrl.replace(/\/+$/, '')
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
@@ -52,7 +56,7 @@ export async function callGeminiImageApi(opts: CallApiOptions, profile: ApiProfi
       method: 'POST',
       headers: { Authorization: `Bearer ${profile.apiKey}`, 'Content-Type': 'application/json' },
       cache: 'no-store',
-      body: JSON.stringify(buildGeminiRequest(opts.prompt, opts.params, opts.inputImageDataUrls)),
+      body: JSON.stringify(buildGeminiRequest(opts.prompt, opts.params, opts.inputImageDataUrls, profile)),
       signal: controller.signal,
     })
     const payload = await response.json().catch(() => null)
@@ -60,5 +64,33 @@ export async function callGeminiImageApi(opts: CallApiOptions, profile: ApiProfi
     return parseGeminiResponse(payload)
   } finally {
     clearTimeout(timeoutId)
+  }
+}
+
+export async function callGeminiImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+  const n = Math.max(1, opts.params.n)
+  if (n === 1) return callGeminiImageApiSingle(opts, profile)
+
+  const results = await Promise.allSettled(Array.from({ length: n }).map(() => callGeminiImageApiSingle({
+    ...opts,
+    params: { ...opts.params, n: 1 },
+  }, profile)))
+  const successfulResults = results
+    .filter((result): result is PromiseFulfilledResult<CallApiResult> => result.status === 'fulfilled')
+    .map((result) => result.value)
+  const failedRequests = results.flatMap((result, requestIndex) => result.status === 'rejected'
+    ? [{ requestIndex, error: result.reason instanceof Error ? result.reason.message : String(result.reason) }]
+    : [])
+
+  if (successfulResults.length === 0) {
+    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (firstError) throw firstError.reason
+    throw new Error('所有 Gemini 请求均失败')
+  }
+
+  return {
+    images: successfulResults.flatMap((result) => result.images),
+    revisedPrompts: successfulResults.flatMap((result) => result.revisedPrompts ?? result.images.map(() => undefined)),
+    ...(failedRequests.length ? { failedRequests } : {}),
   }
 }

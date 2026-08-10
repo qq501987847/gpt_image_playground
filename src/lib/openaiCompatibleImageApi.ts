@@ -23,6 +23,7 @@ import {
 } from './imageApiShared'
 import { isEventStreamResponse, readJsonServerSentEvents } from './serverSentEvents'
 import { prependCodexCliSizePrompt } from './size'
+import { getOpenAIRequestParams } from './modelCapabilities'
 
 function getStreamPartialImages(profile: ApiProfile): number {
   return profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
@@ -129,27 +130,19 @@ function createResponsesImageTool(
   profile: ApiProfile,
   maskDataUrl?: string,
 ): Record<string, unknown> {
+  const capabilityParams = getOpenAIRequestParams(params, profile)
+  if (profile.codexCli) {
+    delete capabilityParams.size
+    delete capabilityParams.quality
+  }
   const tool: Record<string, unknown> = {
     type: 'image_generation',
     action: isEdit ? 'edit' : 'generate',
-    output_format: params.output_format,
-    moderation: params.moderation,
-  }
-
-  if (!profile.codexCli) {
-    tool.size = params.size
+    ...capabilityParams,
   }
 
   if (profile.streamImages) {
     tool.partial_images = getStreamPartialImages(profile)
-  }
-
-  if (!profile.codexCli) {
-    tool.quality = params.quality
-  }
-
-  if (params.output_format !== 'png' && params.output_compression != null) {
-    tool.output_compression = params.output_compression
   }
 
   if (maskDataUrl) {
@@ -504,22 +497,12 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
       const formData = new FormData()
       formData.append('model', profile.model)
       formData.append('prompt', prompt)
-      if (!profile.codexCli) {
-        formData.append('size', params.size)
+      const capabilityParams = getOpenAIRequestParams(params, profile)
+      if (profile.codexCli) {
+        delete capabilityParams.size
+        delete capabilityParams.quality
       }
-      formData.append('output_format', params.output_format)
-      formData.append('moderation', params.moderation)
-
-      if (!profile.codexCli) {
-        formData.append('quality', params.quality)
-      }
-
-      if (params.output_format !== 'png' && params.output_compression != null) {
-        formData.append('output_compression', String(params.output_compression))
-      }
-      if (params.n > 1) {
-        formData.append('n', String(params.n))
-      }
+      for (const [key, value] of Object.entries(capabilityParams)) formData.append(key, String(value))
       if (profile.responseFormatB64Json) {
         formData.append('response_format', 'b64_json')
       }
@@ -564,26 +547,15 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
         signal: controller.signal,
       })
     } else {
+      const capabilityParams = getOpenAIRequestParams(params, profile)
+      if (profile.codexCli) {
+        delete capabilityParams.size
+        delete capabilityParams.quality
+      }
       const body: Record<string, unknown> = {
         model: profile.model,
         prompt,
-        output_format: params.output_format,
-        moderation: params.moderation,
-      }
-
-      if (!profile.codexCli) {
-        body.size = params.size
-      }
-
-      if (!profile.codexCli) {
-        body.quality = params.quality
-      }
-
-      if (params.output_format !== 'png' && params.output_compression != null) {
-        body.output_compression = params.output_compression
-      }
-      if (params.n > 1) {
-        body.n = params.n
+        ...capabilityParams,
       }
       if (profile.responseFormatB64Json) {
         body.response_format = 'b64_json'

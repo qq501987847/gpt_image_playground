@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_model_charges:
-        description: Confirm that this run creates three billable model requests
+        description: Confirm that this run creates four billable model requests
         required: true
         type: boolean
         default: false
@@ -24,7 +24,7 @@ jobs:
       AWAI_SMOKE_SUB2API_ORIGIN: ${{ vars.AWAI_SUB2API_BASE_URL }}
       AWAI_SMOKE_MENU_JWT: ${{ secrets.AWAI_SMOKE_MENU_JWT }}
       AWAI_SMOKE_USER_ID: ${{ secrets.AWAI_SMOKE_USER_ID }}
-      AWAI_SMOKE_GATEWAY_KEY: ${{ secrets.AWAI_SMOKE_GATEWAY_KEY }}
+      AWAI_SMOKE_KEY_ID: ${{ vars.AWAI_SMOKE_KEY_ID }}
       AWAI_SMOKE_EXPECTED_VERSION: ${{ vars.AWAI_RELEASE_VERSION }}
       AWAI_SMOKE_OPENAI_IMAGE_MODEL: ${{ vars.AWAI_SMOKE_OPENAI_IMAGE_MODEL }}
       AWAI_SMOKE_RESPONSES_MODEL: ${{ vars.AWAI_SMOKE_RESPONSES_MODEL }}

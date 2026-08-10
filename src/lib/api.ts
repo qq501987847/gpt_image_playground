@@ -9,5 +9,5 @@ export { normalizeBaseUrl } from './devProxy'
 export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult> {
   const profile = getActiveApiProfile(opts.settings)
   if (profile.provider === 'gemini') return callGeminiImageApi(opts, profile)
-  return callOpenAICompatibleImageApi(opts, { ...profile, provider: 'openai' })
+  return callOpenAICompatibleImageApi(opts, profile)
 }

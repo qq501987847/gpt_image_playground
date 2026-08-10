@@ -1,24 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
-import HistoryModal from './HistoryModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
-import { EditIcon, HelpCircleIcon, HistoryIcon, SettingsIcon } from './icons'
+import { HelpCircleIcon, SettingsIcon } from './icons'
 
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
   const setAppMode = useStore((s) => s.setAppMode)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
-  const agentConversations = useStore((s) => s.agentConversations)
-  const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
-  const activeConversation = agentConversations.find((item) => item.id === activeAgentConversationId)
   const favoriteCollectionTitle = useFavoriteCollectionTitle()
   const showFavoriteCollectionTitle = appMode === 'gallery' && Boolean(activeFavoriteCollectionId)
   const hasActiveTasks = useStore((s) => s.tasks.some((task) => task.status === 'running'))
@@ -26,9 +22,6 @@ export default function Header() {
   const [showHelp, setShowHelp] = useState(false)
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
-  const [showHistoryModal, setShowHistoryModal] = useState(false)
-  const historyButtonRef = useRef<HTMLButtonElement>(null)
-  const createConversation = useStore((s) => s.createAgentConversation)
 
   useEffect(() => {
     if (appMode === 'agent') {
@@ -77,8 +70,8 @@ export default function Header() {
   return (
     <>
       <header data-no-drag-select className={`safe-area-top fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-200 dark:border-white/[0.08] transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}>
-        <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center justify-between relative">
-          <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
+        <div className="safe-area-x safe-header-inner relative mx-auto flex max-w-7xl items-center justify-between">
+          <div className="flex min-w-0 flex-1 items-center gap-2 pr-2 sm:max-w-[calc(50%-8rem)]">
             <h1 className="inline-flex min-w-0 items-start relative mr-2">
               {showFavoriteCollectionTitle ? (
                 <>
@@ -95,79 +88,36 @@ export default function Header() {
                     dismiss()
                     window.location.reload()
                   }}
-                  className="absolute -right-1 -top-1 translate-x-full -translate-y-1/4 px-1 py-0.5 rounded-[4px] border border-red-500/30 text-[9px] font-black bg-red-500 text-white hover:bg-red-600 transition-all animate-fade-in leading-none shadow-sm"
+                  className="absolute -right-1 -top-1 translate-x-full -translate-y-1/4 rounded-[4px] border border-red-500/30 bg-red-500 px-1 py-0.5 text-[9px] font-black leading-none text-white shadow-sm transition-colors hover:bg-red-600 animate-fade-in"
                   title="发现新版本，刷新页面"
                 >
                   NEW
                 </button>
               )}
             </h1>
-            {appMode === 'agent' && <div className="hidden sm:flex items-center gap-1 relative">
-              <button
-                ref={historyButtonRef}
-                type="button"
-                onClick={() => setShowHistoryModal((visible) => !visible)}
-                className="p-1.5 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors"
-                title="历史任务"
-              >
-                <HistoryIcon className="w-5 h-5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAppMode('agent')
-                  createConversation()
-                }}
-                className="p-1.5 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors"
-                title="新对话"
-              >
-                <EditIcon className="w-5 h-5" />
-              </button>
-              {showHistoryModal && (
-                <HistoryModal onClose={() => setShowHistoryModal(false)} ignoreOutsideClickRef={historyButtonRef} />
-              )}
-            </div>}
-          </div>
-          {appMode === 'agent' && activeConversation && (
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden sm:flex max-w-[30%]">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowHistoryModal(true)
-                  // Use setTimeout to ensure HistoryModal is mounted before setting editing id
-                  setTimeout(() => {
-                    useStore.getState().setAgentEditingConversationId(activeConversation.id)
-                  }, 0)
-                }}
-                className="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate hover:bg-gray-100 dark:hover:bg-white/[0.04] px-2 py-1 rounded transition-colors"
-              >
-                {activeConversation.title || 'Agent'}
-              </button>
-            </div>
-          )}
-          {showFavoriteCollectionTitle && (
-            <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
-              <div className="truncate rounded px-2 py-1 text-sm font-semibold text-gray-700 dark:text-gray-300" title={favoriteCollectionTitle}>
-                {favoriteCollectionTitle}
+            {showFavoriteCollectionTitle && (
+              <div className="hidden min-w-0 items-center gap-2 sm:flex">
+                <span className="h-4 w-px shrink-0 bg-gray-200 dark:bg-white/[0.12]" />
+                <span className="truncate text-sm font-semibold text-gray-600 dark:text-gray-300" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
               </div>
-            </div>
-          )}
-          <div className="hidden sm:flex items-center gap-1 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-100/70 dark:bg-white/[0.04] p-1 mr-4">
+            )}
+          </div>
+          <nav aria-label="工作台切换" className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-xl border border-gray-200 bg-gray-100/70 p-1 sm:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
             <button
               type="button"
               onClick={() => setAppMode('gallery')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'gallery' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'gallery' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
-              画廊
+              图片工作台
             </button>
             <button
               type="button"
               onClick={() => setAppMode('agent')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'agent' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
-              Agent
+              Agent创作台
             </button>
-          </div>
+          </nav>
           <div className="flex items-center gap-1 shrink-0">
             <div
               className="relative"
@@ -178,7 +128,7 @@ export default function Header() {
                   dismissAllTooltips()
                   setShowHelp(true)
                 }}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="flex h-10 w-10 items-center justify-center rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-900"
                 aria-label="操作指南"
               >
                 <HelpCircleIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
@@ -193,7 +143,7 @@ export default function Header() {
             >
               <button
                 onClick={() => setShowSettings(true)}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                className="flex h-10 w-10 items-center justify-center rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-900"
                 aria-label="设置"
               >
                 <SettingsIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
@@ -205,38 +155,38 @@ export default function Header() {
           </div>
         </div>
         {deferred && <span className="sr-only">发现新版本，当前任务完成后可刷新</span>}
-        <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-20 opacity-100 pb-2'}`}>
-          <div className="grid grid-cols-2 gap-1 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-100/70 dark:bg-white/[0.04] p-1 mx-2">
+        <div className={`safe-area-x overflow-hidden transition-[max-height,opacity,padding-bottom] duration-300 ease-in-out sm:hidden ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-20 opacity-100 pb-2'}`}>
+          <nav aria-label="工作台切换" className="mx-2 grid grid-cols-2 gap-1 rounded-xl border border-gray-200 bg-gray-100/70 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
             <button
               type="button"
               onClick={() => setAppMode('gallery')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'gallery' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'gallery' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
-              画廊
+              图片工作台
             </button>
             <button
               type="button"
               onClick={() => setAppMode('agent')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'agent' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
-              Agent
+              Agent创作台
             </button>
-          </div>
+          </nav>
         </div>
       </header>
       
       {/* Hint for sliding down */}
-      <div className={`fixed top-0 left-0 right-0 z-30 flex justify-center pointer-events-none transition-all duration-300 ease-in-out sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}>
+      <div className={`pointer-events-none fixed left-0 right-0 top-0 z-30 flex justify-center transition-[transform,opacity] duration-300 ease-in-out sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}>
         <div className="bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-b-xl shadow-lg">
           下拉展示顶栏
         </div>
       </div>
 
-      <div className={`safe-area-top invisible pointer-events-none transition-all duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? 'max-h-0 sm:max-h-[500px] opacity-0 sm:opacity-100 overflow-hidden sm:overflow-visible' : 'max-h-[500px] opacity-100'}`} aria-hidden="true">
+      <div className={`safe-area-top invisible pointer-events-none shrink-0 transition-[max-height,opacity] duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? 'max-h-0 sm:max-h-[500px] opacity-0 sm:opacity-100 overflow-hidden sm:overflow-visible' : 'max-h-[500px] opacity-100'}`} aria-hidden="true">
         <div className="safe-header-inner" />
-        <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 pb-0' : 'max-h-20 pb-2'}`}>
+        <div className={`safe-area-x overflow-hidden transition-[max-height,padding-bottom] duration-300 ease-in-out sm:hidden ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 pb-0' : 'max-h-20 pb-2'}`}>
           <div className="p-1">
-            <div className="py-1.5 text-sm">占位</div>
+            <div className="h-10 text-sm">占位</div>
           </div>
         </div>
       </div>

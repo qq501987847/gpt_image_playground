@@ -12,8 +12,9 @@ interface ImportMetaEnv {
   readonly VITE_SHOW_DEFAULT_CONFIG_ONLY?: string
   readonly VITE_AWAI_ASSET_SERVICE_URL?: string
   readonly VITE_AWAI_SUB2API_ALLOWED_ORIGINS?: string
-  readonly VITE_AWAI_SUPPORT_URL?: string
+  readonly VITE_AWAI_DEV_SUB2API_ORIGIN?: string
   readonly VITE_AWAI_RELEASE_MODE?: string
+  readonly VITE_AWAI_SUB2API_MOCK?: string
 }
 
 interface ImportMeta {

@@ -55,6 +55,7 @@ import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
+import { getModelParamsKey, normalizeParamsForModel } from './lib/modelCapabilities'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
 import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureImageCached, scheduleThumbnailBackfill } from './lib/imageCache'
@@ -70,7 +71,9 @@ import { createPersistedState, getCredentialSafeSettings, mergePersistedAgentCon
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
 import { appRuntime, hasLowBrowserStorage, isDesktopRuntime } from './lib/runtime'
-import { deleteCloudAsset, getCloudAssetDownload, isCloudAssetsConfigured, uploadCloudAsset } from './lib/cloudAssets'
+import { deleteAllStoredCloudAssets, deleteCloudAsset, getCloudAssetDownload, isCloudAssetsConfigured, uploadCloudAsset } from './lib/cloudAssets'
+import { getAgentProfileValidationError } from './lib/agentProfileValidation'
+import { getSub2ApiSession } from './lib/sub2apiSession'
 
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
@@ -89,6 +92,10 @@ const AGENT_CONVERSATION_TITLE_MAX_LENGTH = 28
 const ERROR_TOAST_MAX_LENGTH = 80
 type ToastType = 'info' | 'success' | 'error'
 type AgentDeletionResult = 'deleted' | 'deleted-with-warning' | 'running' | 'not-found'
+
+function isNarrowAgentViewport() {
+  return typeof window === 'undefined' || window.innerWidth < 1024
+}
 
 export function getErrorToastMessage(message: string): string {
   const text = message.trim()
@@ -275,6 +282,8 @@ interface AppState {
   // 模式
   appMode: AppMode
   setAppMode: (mode: AppMode) => void
+  agentSetupOpen: boolean
+  setAgentSetupOpen: (open: boolean) => void
 
   // 设置
   settings: AppSettings
@@ -301,6 +310,7 @@ interface AppState {
 
   // 参数
   params: TaskParams
+  paramsByModel: Record<string, TaskParams>
   setParams: (p: Partial<TaskParams>) => void
   reusedTaskApiProfileId: string | null
   reusedTaskApiProfileName: string | null
@@ -418,6 +428,24 @@ interface AppState {
   setConfirmDialog: (d: AppState['confirmDialog']) => void
 }
 
+function getRuntimeAgentProfileValidationError(settings: AppSettings) {
+  const session = getSub2ApiSession()
+  const validateOnlineGroups = !isDesktopRuntime && session.status === 'ready'
+  return getAgentProfileValidationError(settings, {
+    requireHybrid: validateOnlineGroups,
+    keys: validateOnlineGroups ? session.keys : undefined,
+  })
+}
+
+function openAgentSetupForInvalidConfig(state: AppState, settings: AppSettings) {
+  if (!isDesktopRuntime) {
+    state.setAppMode('gallery')
+    state.setAgentSetupOpen(true)
+    return
+  }
+  state.setShowSettings(true, settings.agentApiConfigMode === 'off' ? 'api' : 'agent')
+}
+
 function isImageReferencedByState(state: AppState, imageId: string) {
   if (state.inputImages.some((img) => img.id === imageId)) return true
   if (state.galleryInputDraft?.inputImages.some((img) => img.id === imageId)) return true
@@ -484,6 +512,8 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       // Mode
       appMode: 'gallery',
+      agentSetupOpen: false,
+      setAgentSetupOpen: (agentSetupOpen) => set({ agentSetupOpen }),
       setAppMode: (appMode) => {
         if (appMode === 'gallery') {
           const state = get()
@@ -505,7 +535,7 @@ export const useStore = create<AppState>()(
         const state = get()
         const settings = normalizeSettings(state.settings)
         const activeProfile = getActiveApiProfile(settings)
-        const agentValidationError = getAgentProfileValidationError(settings)
+        const agentValidationError = getRuntimeAgentProfileValidationError(settings)
 
         if (!agentValidationError) {
           const galleryInputDraft = saveGalleryInputDraft(state)
@@ -513,7 +543,7 @@ export const useStore = create<AppState>()(
             appMode: 'agent',
             galleryInputDraft,
             agentMobileHeaderVisible: false,
-            agentSidebarCollapsed: true,
+            agentSidebarCollapsed: isNarrowAgentViewport(),
             agentAssetPanelCollapsed: true,
             selectedTaskIds: [],
             selectedFavoriteCollectionIds: [],
@@ -522,41 +552,9 @@ export const useStore = create<AppState>()(
           return
         }
 
-        if (settings.agentApiConfigMode === 'off' && activeProfile.provider === 'openai' && activeProfile.apiMode !== 'responses') {
-          state.setConfirmDialog({
-            title: '需要 Responses API 配置',
-            message: `当前配置「${activeProfile.name}」使用的是 Images API，仅支持生成图片，无 Agent 模式需要的对话能力。\n\n请前往 API 配置页，将当前配置调整为 Responses API，或切换/新建一个支持 Responses API 的配置。`,
-            confirmText: '去设置',
-            cancelText: '取消',
-            action: () => {
-              useStore.getState().setShowSettings(true, 'api')
-            },
-          })
-          return
-        }
-
-        if (settings.agentApiConfigMode !== 'off') {
-          state.setConfirmDialog({
-            title: 'Agent API 配置不完整',
-            message: `${agentValidationError.message}\n\n请前往 Agent 配置页，选择或新建可用配置。`,
-            confirmText: '去设置',
-            cancelText: '取消',
-            action: () => {
-              useStore.getState().setShowSettings(true, 'agent')
-            },
-          })
-          return
-        }
-
-        state.setConfirmDialog({
-          title: '配置不支持 Agent 模式',
-          message: `当前配置「${activeProfile.name}」所属的服务商暂不支持 Agent 模式。Agent 模式需要使用支持 Responses API 的 OpenAI 配置。\n\n请前往 API 配置页，切换或新建一个支持 Responses API 的配置。`,
-          confirmText: '去设置',
-          cancelText: '取消',
-          action: () => {
-            useStore.getState().setShowSettings(true, 'api')
-          },
-        })
+        void activeProfile
+        void agentValidationError
+        set({ agentSetupOpen: true })
       },
 
       // Settings
@@ -594,9 +592,25 @@ export const useStore = create<AppState>()(
           )
         }
         const settings = normalizeSettings(merged)
+        const previousActiveProfile = getActiveApiProfile(previous)
+        const activeProfile = getActiveApiProfile(settings)
+        const previousKey = getModelParamsKey(previousActiveProfile)
+        const activeKey = getModelParamsKey(activeProfile)
+        const paramsByModel = previousKey === activeKey
+          ? st.paramsByModel
+          : {
+              ...st.paramsByModel,
+              [previousKey]: st.params,
+            }
+        const restoredParams = previousKey === activeKey
+          ? st.params
+          : paramsByModel[activeKey] ?? st.params
+        const params = normalizeParamsForModel(restoredParams, activeProfile)
         const shouldClearReusedProfile = st.reusedTaskApiProfileId && settings.activeProfileId === st.reusedTaskApiProfileId
         return {
           settings,
+          params,
+          paramsByModel: { ...paramsByModel, [activeKey]: params },
           ...(shouldClearReusedProfile
             ? { reusedTaskApiProfileId: null, reusedTaskApiProfileName: null, reusedTaskApiProfileMissing: false }
             : {}),
@@ -692,7 +706,12 @@ export const useStore = create<AppState>()(
 
       // Params
       params: { ...DEFAULT_PARAMS },
-      setParams: (p) => set((s) => ({ params: { ...s.params, ...p } })),
+      paramsByModel: {},
+      setParams: (p) => set((s) => {
+        const params = { ...s.params, ...p }
+        const key = getModelParamsKey(getActiveApiProfile(s.settings))
+        return { params, paramsByModel: { ...s.paramsByModel, [key]: params } }
+      }),
       reusedTaskApiProfileId: null,
       reusedTaskApiProfileName: null,
       reusedTaskApiProfileMissing: false,
@@ -707,7 +726,7 @@ export const useStore = create<AppState>()(
       agentConversationsLoaded: false,
       activeAgentConversationId: null,
       agentInputDrafts: {},
-      agentSidebarCollapsed: true,
+      agentSidebarCollapsed: false,
       agentAssetTab: 'outputs',
       agentAssetPanelCollapsed: false,
       agentMobileHeaderVisible: false,
@@ -728,7 +747,7 @@ export const useStore = create<AppState>()(
               ),
               activeAgentConversationId: latestConversation.id,
               agentInputDrafts,
-              agentSidebarCollapsed: true,
+              agentSidebarCollapsed: isNarrowAgentViewport(),
               agentEditingRoundId: null,
               ...restoreAgentInputDraftState(agentInputDrafts, latestConversation.id),
             }
@@ -746,7 +765,7 @@ export const useStore = create<AppState>()(
             ],
             activeAgentConversationId: conversation.id,
             agentInputDrafts,
-            agentSidebarCollapsed: true,
+            agentSidebarCollapsed: isNarrowAgentViewport(),
             agentEditingRoundId: null,
             ...restoreAgentInputDraftState(agentInputDrafts, conversation.id),
           }
@@ -757,7 +776,8 @@ export const useStore = create<AppState>()(
         if (state.activeAgentConversationId === id) {
           return {
             activeAgentConversationId: id,
-            agentSidebarCollapsed: true,
+            agentConversations: state.agentConversations.map((conversation) => conversation.id === id ? { ...conversation, unread: false } : conversation),
+            agentSidebarCollapsed: isNarrowAgentViewport(),
             agentAssetPanelCollapsed: true,
             agentEditingRoundId: null,
           }
@@ -766,7 +786,8 @@ export const useStore = create<AppState>()(
         return {
           activeAgentConversationId: id,
           agentInputDrafts,
-          agentSidebarCollapsed: true,
+          agentConversations: state.agentConversations.map((conversation) => conversation.id === id ? { ...conversation, unread: false } : conversation),
+          agentSidebarCollapsed: isNarrowAgentViewport(),
           agentAssetPanelCollapsed: true,
           agentEditingRoundId: null,
           ...restoreAgentInputDraftState(agentInputDrafts, id),
@@ -1138,25 +1159,6 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
     profiles: normalized.profiles.map((item) => item.id === profile.id ? profile : item),
     activeProfileId: profile.id,
   })
-}
-
-function getAgentProfileValidationError(settings: AppSettings): { profile: ApiProfile | null; message: string } | null {
-  const normalized = normalizeSettings(settings)
-  const textProfile = getAgentTextApiProfile(normalized)
-  if (!textProfile || textProfile.provider !== 'openai' || textProfile.apiMode !== 'responses') {
-    return { profile: textProfile, message: 'Agent 模式需要使用支持 Responses API 的 OpenAI 兼容文本模型配置。' }
-  }
-  const textProfileError = validateApiProfile(textProfile)
-  if (textProfileError) return { profile: textProfile, message: `文本模型 API 配置不完整：${textProfileError}` }
-
-  if (normalized.agentApiConfigMode === 'hybrid') {
-    const imageProfile = getAgentImageApiProfile(normalized)
-    if (!imageProfile) return { profile: null, message: '图像模型 API 配置不存在，请在 Agent 配置页选择可用的图像模型配置。' }
-    const imageProfileError = validateApiProfile(imageProfile)
-    if (imageProfileError) return { profile: imageProfile, message: `图像模型 API 配置不完整：${imageProfileError}` }
-  }
-
-  return null
 }
 
 function getReusedTaskApiProfile(settings: AppSettings, profileId: string | null): ApiProfile | null {
@@ -1718,9 +1720,12 @@ function getActiveAgentConversation(): AgentConversation {
 
 function updateAgentConversation(conversationId: string, updater: (conversation: AgentConversation) => AgentConversation) {
   useStore.setState((state) => ({
-    agentConversations: state.agentConversations.map((conversation) =>
-      conversation.id === conversationId ? updater(conversation) : conversation,
-    ),
+    agentConversations: state.agentConversations.map((conversation) => {
+      if (conversation.id !== conversationId) return conversation
+      const next = updater(conversation)
+      const finishedNow = conversation.rounds.some((round) => round.status === 'running') && !next.rounds.some((round) => round.status === 'running')
+      return finishedNow && state.activeAgentConversationId !== conversationId ? { ...next, unread: true } : next
+    }),
   }))
 }
 
@@ -2193,7 +2198,7 @@ async function continueRecoveredAgentRound(taskId: string) {
     }
 
     const normalizedSettings = normalizeSettings(updatedState.settings)
-    const agentValidationError = getAgentProfileValidationError(normalizedSettings)
+    const agentValidationError = getRuntimeAgentProfileValidationError(normalizedSettings)
     if (agentValidationError) {
       failRound(`无法继续恢复任务：${agentValidationError.message}`)
       return
@@ -2245,10 +2250,10 @@ export async function submitAgentMessage() {
   const { settings, prompt, inputImages, maskDraft, params, showToast } = state
   const normalizedSettings = normalizeSettings(settings)
 
-  const agentValidationError = getAgentProfileValidationError(normalizedSettings)
+  const agentValidationError = getRuntimeAgentProfileValidationError(normalizedSettings)
   if (agentValidationError) {
     showToast(`请先完善 Agent API 配置：${agentValidationError.message}`, 'error')
-    state.setShowSettings(true, normalizedSettings.agentApiConfigMode === 'off' ? 'api' : 'agent')
+    openAgentSetupForInvalidConfig(state, normalizedSettings)
     return
   }
 
@@ -2395,10 +2400,10 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   const { settings, params, showToast } = state
   const normalizedSettings = normalizeSettings(settings)
 
-  const agentValidationError = getAgentProfileValidationError(normalizedSettings)
+  const agentValidationError = getRuntimeAgentProfileValidationError(normalizedSettings)
   if (agentValidationError) {
     showToast(`请先完善 Agent API 配置：${agentValidationError.message}`, 'error')
-    state.setShowSettings(true, normalizedSettings.agentApiConfigMode === 'off' ? 'api' : 'agent')
+    openAgentSetupForInvalidConfig(state, normalizedSettings)
     return
   }
 
@@ -2513,10 +2518,10 @@ export async function continueAgentResponse(conversationId: string, roundId: str
     return
   }
 
-  const agentValidationError = getAgentProfileValidationError(normalizedSettings)
+  const agentValidationError = getRuntimeAgentProfileValidationError(normalizedSettings)
   if (agentValidationError) {
     state.showToast(`请先完善 Agent API 配置：${agentValidationError.message}`, 'error')
-    state.setShowSettings(true, normalizedSettings.agentApiConfigMode === 'off' ? 'api' : 'agent')
+    openAgentSetupForInvalidConfig(state, normalizedSettings)
     return
   }
 
@@ -3821,8 +3826,9 @@ export async function deleteTaskCloudAssets(taskId: string) {
 }
 
 export async function deleteAllCloudAssets() {
-  const taskIds = useStore.getState().tasks.filter((task) => task.cloudCopies?.some((copy) => copy.id)).map((task) => task.id)
-  for (const taskId of taskIds) await deleteTaskCloudAssets(taskId)
+  await deleteAllStoredCloudAssets()
+  const tasks = useStore.getState().tasks.filter((task) => task.cloudCopies?.length)
+  for (const task of tasks) updateTaskInStore(task.id, { cloudCopies: [] })
 }
 
 export async function downloadTaskCloudAsset(taskId: string) {
@@ -3969,9 +3975,10 @@ export async function reuseConfig(task: TaskRecord) {
   const { settings, setPrompt, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile } = useStore.getState()
   const normalizedSettings = normalizeSettings(settings)
   const currentProfile = getActiveApiProfile(settings)
-  const matchedProfile = normalizedSettings.reuseTaskApiProfileTemporarily ? getTaskApiProfile(normalizedSettings, task) : null
+  const shouldReuseTaskApiProfile = isDesktopRuntime && normalizedSettings.reuseTaskApiProfileTemporarily
+  const matchedProfile = shouldReuseTaskApiProfile ? getTaskApiProfile(normalizedSettings, task) : null
   const shouldTemporarilyReuseProfile = Boolean(matchedProfile && matchedProfile.id !== currentProfile.id)
-  const missingReusedProfile = normalizedSettings.reuseTaskApiProfileTemporarily && !matchedProfile
+  const missingReusedProfile = shouldReuseTaskApiProfile && !matchedProfile
   const taskProfileName = matchedProfile?.name ?? getTaskApiProfileName(task)
   const paramsSettings = shouldTemporarilyReuseProfile && matchedProfile ? createSettingsForApiProfile(normalizedSettings, matchedProfile) : normalizedSettings
 

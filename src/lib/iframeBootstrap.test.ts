@@ -31,6 +31,37 @@ describe('iframe bootstrap', () => {
     expect(urls).toEqual(['/?user_id=u1&src_host=http%3A%2F%2Fsub2api.example'])
   })
 
+  it('accepts only the exact configured loopback HTTP origin for local development', () => {
+    const storage = new Map<string, string>()
+    const session = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+    }
+    const context = bootstrapIframeContext(
+      new URL('http://127.0.0.1:5173/?user_id=u1&token=jwt&src_host=http%3A%2F%2F127.0.0.1%3A8080'),
+      session,
+      [],
+      () => undefined,
+      'http://127.0.0.1:8080',
+    )
+
+    expect(context).toMatchObject({ userId: 'u1', origin: 'http://127.0.0.1:8080' })
+    expect(bootstrapIframeContext(
+      new URL('http://127.0.0.1:5173/?user_id=u1&token=jwt&src_host=http%3A%2F%2Flocalhost%3A8080'),
+      session,
+      [],
+      () => undefined,
+      'http://127.0.0.1:8080',
+    )).toBeNull()
+    expect(bootstrapIframeContext(
+      new URL('http://127.0.0.1:5173/?user_id=u1&token=jwt&src_host=http%3A%2F%2F192.168.1.10%3A8080'),
+      session,
+      [],
+      () => undefined,
+      'http://192.168.1.10:8080',
+    )).toBeNull()
+  })
+
   it('reuses the session token after it has been removed from the URL', () => {
     const storage = new Map([['awai-sub2api-token:https%3A%2F%2Fsub2api.example:u1', 'session-jwt']])
     const context = bootstrapIframeContext(new URL('https://awai.example/?user_id=u1&src_host=https%3A%2F%2Fsub2api.example&src_url=%2Fmenu'), {

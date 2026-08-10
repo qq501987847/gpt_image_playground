@@ -46,13 +46,14 @@ import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/Zi
 import Sub2ApiProfileFields from './settings/Sub2ApiProfileFields'
 import { useSub2ApiSession } from '../lib/sub2apiSession'
 import { isDesktopRuntime, migrateDesktopLibrary } from '../lib/runtime'
+import { isImageGenerationProfile } from '../lib/modelCapabilities'
+import { CLOUD_ASSETS_ENABLED } from '../lib/cloudAssets'
 
 function newId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 }
 
 const COPY_IMPORT_URL_OPTIONS_STORAGE_KEY = 'awai-creative-workbench.copy-import-url-options'
-const AWAI_SUPPORT_URL = import.meta.env.VITE_AWAI_SUPPORT_URL || ''
 const AWAI_RELEASE_MODE = import.meta.env.VITE_AWAI_RELEASE_MODE === 'true'
 
 const DEFAULT_COPY_IMPORT_URL_OPTIONS = {
@@ -144,6 +145,7 @@ export default function SettingsModal() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const settings = useStore((s) => s.settings)
   const setSettings = useStore((s) => s.setSettings)
+  const setAgentSetupOpen = useStore((s) => s.setAgentSetupOpen)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setReusedTaskApiProfile = useStore((s) => s.setReusedTaskApiProfile)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -173,7 +175,7 @@ export default function SettingsModal() {
   const [customProviderImportError, setCustomProviderImportError] = useState<string | null>(null)
   const [profileImportUrlTooltipVisible, setProfileImportUrlTooltipVisible] = useState(false)
   const [duplicateProfileTooltipVisible, setDuplicateProfileTooltipVisible] = useState(false)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('api')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(isDesktopRuntime ? 'api' : 'general')
   const [exportConfig, setExportConfig] = useState(true)
   const [exportTasks, setExportTasks] = useState(true)
   const [importConfig, setImportConfig] = useState(true)
@@ -207,6 +209,7 @@ export default function SettingsModal() {
   const defaultConfigOnly = isDefaultConfigOnlyEnabled()
   const activeProfile = draft.profiles.find((profile) => profile.id === draft.activeProfileId) ?? draft.profiles[0] ?? getActiveApiProfile(draft)
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
+  const activeProfileUsesSub2ApiBase64 = activeProfile.provider === 'openai' && activeProfile.apiMode === 'images' && Boolean(activeProfile.keyId)
   const activeProviderUsesApiUrl = true
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
   const activeProfileApiProxyEligible = isProfileApiProxyEligible(draft, activeProfile)
@@ -246,13 +249,15 @@ export default function SettingsModal() {
   const selectedAgentTextProfile = agentTextProfiles.find((profile) => profile.id === draft.agentTextProfileId)
     ?? (isAgentTextApiProfile(activeProfile) ? activeProfile : agentTextProfiles[0])
     ?? null
-  const selectedAgentImageProfile = draft.profiles.find((profile) => profile.id === draft.agentImageProfileId)
-    ?? activeProfile
+  const agentImageProfiles = draft.profiles.filter(isImageGenerationProfile)
+  const selectedAgentImageProfile = agentImageProfiles.find((profile) => profile.id === draft.agentImageProfileId)
+    ?? (isImageGenerationProfile(activeProfile) ? activeProfile : agentImageProfiles[0])
+    ?? null
   const agentTextProfileOptions = agentTextProfiles.map((profile) => ({
     label: `${profile.name} · ${profile.model || DEFAULT_RESPONSES_MODEL}`,
     value: profile.id,
   }))
-  const agentImageProfileOptions = draft.profiles.map((profile) => ({
+  const agentImageProfileOptions = agentImageProfiles.map((profile) => ({
     label: `${profile.name} · ${getApiProviderLabel(draft, profile.provider)} · ${profile.model}`,
     value: profile.id,
   }))
@@ -268,7 +273,7 @@ export default function SettingsModal() {
 
     wasSettingsOpenRef.current = true
     const normalizedSettings = normalizeSettings(settings)
-    const displaySettings = normalizedSettings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId && normalizedSettings.profiles.some((profile) => profile.id === reusedTaskApiProfileId)
+    const displaySettings = isDesktopRuntime && normalizedSettings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId && normalizedSettings.profiles.some((profile) => profile.id === reusedTaskApiProfileId)
       ? normalizeSettings({ ...normalizedSettings, activeProfileId: reusedTaskApiProfileId })
       : normalizedSettings
     const nextDraft = normalizeSettings({
@@ -290,7 +295,8 @@ export default function SettingsModal() {
   }, [activeProfile.id, activeProfile.timeout])
 
   useEffect(() => {
-    if (showSettings && settingsTabRequest) setActiveTab(settingsTabRequest)
+    if (!showSettings || !settingsTabRequest) return
+    setActiveTab(!isDesktopRuntime && settingsTabRequest === 'api' ? 'agent' : settingsTabRequest)
   }, [settingsTabRequest, showSettings])
 
   const updateProfileMenuMaxHeight = useCallback(() => {
@@ -609,13 +615,15 @@ export default function SettingsModal() {
   if (!showSettings) return null
 
   const handleExport = async () => {
-    if (exportTasks && hasRunningOperations) {
+    if ((isDesktopRuntime ? exportTasks : true) && hasRunningOperations) {
       showToast('当前有任务正在进行，请完成或停止后再导出', 'error')
       return
     }
     setIsExportingData(true)
     try {
-      await exportData({ exportConfig, exportTasks })
+      await exportData(isDesktopRuntime
+        ? { exportConfig, exportTasks }
+        : { exportConfig: false, exportTasks: true })
     } finally {
       setIsExportingData(false)
     }
@@ -646,7 +654,9 @@ export default function SettingsModal() {
   }
 
   const handleClearAllData = async () => {
-    await clearData({ clearConfig, clearTasks })
+    await clearData(isDesktopRuntime
+      ? { clearConfig, clearTasks }
+      : { clearConfig: false, clearTasks: true })
     const nextDraft = normalizeSettings(useStore.getState().settings)
     setDraft(nextDraft)
     setTimeoutInput(String(getActiveApiProfile(nextDraft).timeout))
@@ -1075,7 +1085,7 @@ export default function SettingsModal() {
           {/* Sidebar */}
           <div className="w-full sm:w-48 shrink-0 flex flex-col border-b sm:border-b-0 sm:border-r border-gray-100 dark:border-white/[0.08] bg-gray-50/50 dark:bg-white/[0.02]">
             <nav className="flex-1 overflow-x-auto sm:overflow-y-auto custom-scrollbar p-3 space-x-1 sm:space-x-0 sm:space-y-1 flex sm:flex-col">
-              <button
+              {isDesktopRuntime && <button
                 onClick={() => setActiveTab('api')}
                 className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'api' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
               >
@@ -1083,7 +1093,7 @@ export default function SettingsModal() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                 </svg>
                 API 配置
-              </button>
+              </button>}
               <button
                 onClick={() => setActiveTab('general')}
                 className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'general' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
@@ -1111,7 +1121,7 @@ export default function SettingsModal() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
                 </svg>
-                数据管理
+                {isDesktopRuntime ? '数据管理' : '存储与隐私'}
               </button>
               <button
                 onClick={() => setActiveTab('about')}
@@ -1150,66 +1160,83 @@ export default function SettingsModal() {
                 updateAgentApiConfigMode={updateAgentApiConfigMode}
                 commitSettings={commitSettings}
                 commitAgentMaxToolRounds={commitAgentMaxToolRounds}
+                onOpenAgentSetup={() => {
+                  setShowSettings(false)
+                  setAgentSetupOpen(true)
+                }}
               />
             )}
             
-            {activeTab === 'api' && (
+            {isDesktopRuntime && activeTab === 'api' && (
               <div className="space-y-4">
                 <div>
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">当前配置</span>
-                    {!AWAI_RELEASE_MODE && <span className="relative inline-flex">
-                      <button
-                        type="button"
-                        onClick={() => confirmCopyProfileImportUrl(activeProfile)}
-                        onMouseEnter={() => setProfileImportUrlTooltipVisible(true)}
-                        onMouseLeave={() => setProfileImportUrlTooltipVisible(false)}
-                        onFocus={() => setProfileImportUrlTooltipVisible(true)}
-                        onBlur={() => setProfileImportUrlTooltipVisible(false)}
-                        onTouchStart={() => {
-                          clearProfileImportUrlTooltipTimer()
-                          profileImportUrlTooltipTimerRef.current = window.setTimeout(() => {
-                            setProfileImportUrlTooltipVisible(true)
-                            profileImportUrlTooltipTimerRef.current = null
-                          }, 450)
-                        }}
-                        onTouchEnd={clearProfileImportUrlTooltipTimer}
-                        onTouchCancel={clearProfileImportUrlTooltipTimer}
-                        className="flex h-5 w-5 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-                        aria-label={`复制导入配置「${activeProfile.name}」的 URL`}
-                      >
-                        <LinkIcon className="h-3.5 w-3.5" />
-                      </button>
-                      <ViewportTooltip visible={profileImportUrlTooltipVisible} className="whitespace-nowrap">
-                        复制导入 URL
-                      </ViewportTooltip>
-                    </span>}
-                    {!defaultConfigOnly && <span className="relative inline-flex">
-                      <button
-                        type="button"
-                        onClick={duplicateActiveProfile}
-                        onMouseEnter={() => setDuplicateProfileTooltipVisible(true)}
-                        onMouseLeave={() => setDuplicateProfileTooltipVisible(false)}
-                        onFocus={() => setDuplicateProfileTooltipVisible(true)}
-                        onBlur={() => setDuplicateProfileTooltipVisible(false)}
-                        onTouchStart={() => {
-                          clearDuplicateProfileTooltipTimer()
-                          duplicateProfileTooltipTimerRef.current = window.setTimeout(() => {
-                            setDuplicateProfileTooltipVisible(true)
-                            duplicateProfileTooltipTimerRef.current = null
-                          }, 450)
-                        }}
-                        onTouchEnd={clearDuplicateProfileTooltipTimer}
-                        onTouchCancel={clearDuplicateProfileTooltipTimer}
-                        className="flex h-5 w-5 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
-                        aria-label={`复制一份配置「${activeProfile.name}」`}
-                      >
-                        <CopyIcon className="h-3.5 w-3.5" />
-                      </button>
-                      <ViewportTooltip visible={duplicateProfileTooltipVisible} className="whitespace-nowrap">
-                        复制当前配置
-                      </ViewportTooltip>
-                    </span>}
+                  <div className="mb-1.5 flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="block shrink-0 text-sm text-gray-600 dark:text-gray-300">当前配置</span>
+                      {!AWAI_RELEASE_MODE && <span className="relative inline-flex">
+                        <button
+                          type="button"
+                          onClick={() => confirmCopyProfileImportUrl(activeProfile)}
+                          onMouseEnter={() => setProfileImportUrlTooltipVisible(true)}
+                          onMouseLeave={() => setProfileImportUrlTooltipVisible(false)}
+                          onFocus={() => setProfileImportUrlTooltipVisible(true)}
+                          onBlur={() => setProfileImportUrlTooltipVisible(false)}
+                          onTouchStart={() => {
+                            clearProfileImportUrlTooltipTimer()
+                            profileImportUrlTooltipTimerRef.current = window.setTimeout(() => {
+                              setProfileImportUrlTooltipVisible(true)
+                              profileImportUrlTooltipTimerRef.current = null
+                            }, 450)
+                          }}
+                          onTouchEnd={clearProfileImportUrlTooltipTimer}
+                          onTouchCancel={clearProfileImportUrlTooltipTimer}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-400 outline-none transition-[background-color,color,transform] hover:bg-gray-100 hover:text-gray-600 focus-visible:ring-2 focus-visible:ring-blue-500/50 active:not-disabled:scale-[0.96] dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                          aria-label={`复制导入配置「${activeProfile.name}」的 URL`}
+                        >
+                          <LinkIcon className="h-3.5 w-3.5" />
+                        </button>
+                        <ViewportTooltip visible={profileImportUrlTooltipVisible} className="whitespace-nowrap">
+                          复制导入 URL
+                        </ViewportTooltip>
+                      </span>}
+                      {!defaultConfigOnly && <span className="relative inline-flex">
+                        <button
+                          type="button"
+                          onClick={duplicateActiveProfile}
+                          onMouseEnter={() => setDuplicateProfileTooltipVisible(true)}
+                          onMouseLeave={() => setDuplicateProfileTooltipVisible(false)}
+                          onFocus={() => setDuplicateProfileTooltipVisible(true)}
+                          onBlur={() => setDuplicateProfileTooltipVisible(false)}
+                          onTouchStart={() => {
+                            clearDuplicateProfileTooltipTimer()
+                            duplicateProfileTooltipTimerRef.current = window.setTimeout(() => {
+                              setDuplicateProfileTooltipVisible(true)
+                              duplicateProfileTooltipTimerRef.current = null
+                            }, 450)
+                          }}
+                          onTouchEnd={clearDuplicateProfileTooltipTimer}
+                          onTouchCancel={clearDuplicateProfileTooltipTimer}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-400 outline-none transition-[background-color,color,transform] hover:bg-gray-100 hover:text-gray-600 focus-visible:ring-2 focus-visible:ring-blue-500/50 active:not-disabled:scale-[0.96] dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                          aria-label={`复制一份配置「${activeProfile.name}」`}
+                        >
+                          <CopyIcon className="h-3.5 w-3.5" />
+                        </button>
+                        <ViewportTooltip visible={duplicateProfileTooltipVisible} className="whitespace-nowrap">
+                          复制当前配置
+                        </ViewportTooltip>
+                      </span>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={createNewProfile}
+                      disabled={defaultConfigOnly}
+                      className={`inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium outline-none transition-[background-color,color,transform] focus-visible:ring-2 focus-visible:ring-blue-500/50 active:not-disabled:scale-[0.96] ${defaultConfigOnly ? 'cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-white/[0.04] dark:text-gray-500' : 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20'}`}
+                      aria-label={defaultConfigOnly ? '无法新建 API 配置：当前部署已锁定为单配置模式' : '新建 API 配置'}
+                      title={defaultConfigOnly ? '当前部署已锁定为单配置模式' : '新建 API 配置'}
+                    >
+                      <PlusIcon className="h-4 w-4" />
+                      <span>新建配置</span>
+                    </button>
                   </div>
                   <div ref={profileMenuRef} className="relative">
                     <button
@@ -1232,6 +1259,11 @@ export default function SettingsModal() {
                       </span>
                       <ChevronDownIcon className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${showProfileMenu ? 'rotate-180' : ''}`} />
                     </button>
+                    {defaultConfigOnly && (
+                      <p className="mt-1.5 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                        当前部署已锁定为单配置模式，无法新建、复制或切换配置。
+                      </p>
+                    )}
                     
                     {showProfileMenu && !defaultConfigOnly && (
                       <>
@@ -1586,7 +1618,8 @@ export default function SettingsModal() {
                     <button
                       type="button"
                       onClick={() => updateActiveProfile({ responseFormatB64Json: !activeProfile.responseFormatB64Json }, true)}
-                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      disabled={activeProfileUsesSub2ApiBase64}
+                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${activeProfileUsesSub2ApiBase64 ? 'cursor-not-allowed opacity-70' : ''}`}
                       role="switch"
                       aria-checked={!!activeProfile.responseFormatB64Json}
                       aria-label="返回 Base64 图片数据"
@@ -1595,7 +1628,9 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后在请求体中追加 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">response_format: b64_json</code>，使接口直接返回 Base64 编码的图片数据而非 URL。并非所有服务商和网关都支持此功能。
+                    {activeProfileUsesSub2ApiBase64
+                      ? <>绑定 Sub2API Key 时自动开启，避免图片 URL 被浏览器跨域拦截。</>
+                      : <>开启后在请求体中追加 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">response_format: b64_json</code>，使接口直接返回 Base64 编码的图片数据而非 URL。并非所有服务商和网关都支持此功能。</>}
                   </div>
                 </div>
               )}
@@ -1663,7 +1698,7 @@ export default function SettingsModal() {
                     </button>
                   </div>
                 )}
-                <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-500/20 dark:bg-blue-500/5">
+                {CLOUD_ASSETS_ENABLED && <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-500/20 dark:bg-blue-500/5">
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">云端临时保存</h4>
@@ -1692,13 +1727,15 @@ export default function SettingsModal() {
                   >
                     立即删除全部已有副本
                   </button>
-                </div>
-                <div className="rounded-2xl bg-gray-50/80 p-4 border border-gray-200/60 dark:bg-white/[0.02] dark:border-white/[0.05] flex items-start gap-3">
-                  <svg className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </div>}
+                <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-500/20 dark:bg-amber-500/10">
+                  <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.3 3.8L2.4 17.5A2 2 0 004.1 20h15.8a2 2 0 001.7-2.5L13.7 3.8a2 2 0 00-3.4 0z" />
                   </svg>
-                  <div className="text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
-                    浏览器本地保存完整历史；开启云端临时保存时，生成结果会额外保留 24 小时。长期迁移请导出 AWAI 备份 ZIP。
+                  <div className="text-[13px] leading-relaxed text-amber-800 dark:text-amber-200">
+                    {isDesktopRuntime
+                      ? '素材和历史仅保存在当前设备的素材库中。请定期导出备份，避免因设备或磁盘故障丢失。'
+                      : '素材仅保存在当前浏览器中。清除浏览器数据、使用无痕模式或更换设备后可能无法恢复，请及时下载或导出重要内容。'}
                   </div>
                 </div>
 
@@ -1707,8 +1744,12 @@ export default function SettingsModal() {
                     <ExportIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
                     <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">导出数据</h4>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件</p>
-                  <div className="flex flex-wrap gap-x-6 gap-y-3">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {isDesktopRuntime
+                      ? '受文件大小限制，过大的备份将自动分片导出'
+                      : '导出当前浏览器中的任务、Agent 对话和图片'}
+                  </p>
+                  {isDesktopRuntime && <div className="flex flex-wrap gap-x-6 gap-y-3">
                     <Checkbox
                       checked={exportConfig}
                       onChange={setExportConfig}
@@ -1719,10 +1760,10 @@ export default function SettingsModal() {
                       onChange={setExportTasks}
                       label="包含任务和图片"
                     />
-                  </div>
+                  </div>}
                   <button
                     onClick={handleExport}
-                    disabled={(!exportConfig && !exportTasks) || isExportingData}
+                    disabled={(isDesktopRuntime && !exportConfig && !exportTasks) || isExportingData}
                     className="w-full rounded-xl bg-gray-100/80 px-4 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 disabled:opacity-50 disabled:hover:bg-gray-100/80 disabled:hover:text-gray-700 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white dark:disabled:hover:bg-white/[0.06] dark:disabled:hover:text-gray-300 flex items-center justify-center gap-2"
                   >
                     {isExportingData ? (
@@ -1734,12 +1775,12 @@ export default function SettingsModal() {
                         导出中...
                       </>
                     ) : (
-                      '导出所选数据'
+                      isDesktopRuntime ? '导出所选数据' : '导出任务和图片'
                     )}
                   </button>
                 </div>
 
-                <div className="rounded-2xl border border-gray-100 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.02] space-y-4 shadow-sm">
+                {isDesktopRuntime && <div className="rounded-2xl border border-gray-100 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.02] space-y-4 shadow-sm">
                   <div className="flex items-center gap-2 mb-1">
                     <ImportIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
                     <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">导入数据</h4>
@@ -1782,14 +1823,17 @@ export default function SettingsModal() {
                     className="hidden"
                     onChange={handleImport}
                   />
-                </div>
+                </div>}
 
                 <div className="rounded-2xl border border-red-100/50 bg-red-50/30 p-4 dark:border-red-500/10 dark:bg-red-500/5 space-y-4 shadow-sm">
                   <div className="flex items-center gap-2 mb-1">
                     <TrashIcon className="w-4 h-4 text-red-500/90 dark:text-red-400" />
-                    <h4 className="text-sm font-bold text-red-500/90 dark:text-red-400">清除数据</h4>
+                    <h4 className="text-sm font-bold text-red-500/90 dark:text-red-400">{isDesktopRuntime ? '清除数据' : '清除本地历史'}</h4>
                   </div>
-                  <div className="flex flex-wrap gap-x-6 gap-y-3">
+                  {!isDesktopRuntime && (
+                    <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">清除当前浏览器中的任务、Agent 对话和图片。此操作不可恢复。</p>
+                  )}
+                  {isDesktopRuntime && <div className="flex flex-wrap gap-x-6 gap-y-3">
                     <Checkbox
                       checked={clearConfig}
                       onChange={setClearConfig}
@@ -1802,19 +1846,21 @@ export default function SettingsModal() {
                       label="包含任务和图片"
                       tone="danger"
                     />
-                  </div>
+                  </div>}
                   <button
                     onClick={() =>
                       setConfirmDialog({
-                        title: '清空所选数据',
-                        message: `确定要清空所选的数据吗？此操作不可恢复。`,
+                        title: isDesktopRuntime ? '清空所选数据' : '清空本地历史',
+                        message: isDesktopRuntime
+                          ? '确定要清空所选的数据吗？此操作不可恢复。'
+                          : '确定要清空当前浏览器中的任务、Agent 对话和图片吗？此操作不可恢复。',
                         action: () => handleClearAllData(),
                       })
                     }
-                    disabled={!clearConfig && !clearTasks}
+                    disabled={isDesktopRuntime && !clearConfig && !clearTasks}
                     className="w-full rounded-xl bg-red-100/80 px-4 py-2.5 text-sm font-medium text-red-600 transition-all hover:bg-red-200 hover:text-red-700 disabled:opacity-50 disabled:hover:bg-red-100/80 disabled:hover:text-red-600 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20 dark:hover:text-red-300 dark:disabled:hover:bg-red-500/10 dark:disabled:hover:text-red-400"
                   >
-                    清空所选数据
+                    {isDesktopRuntime ? '清空所选数据' : '清空本地历史'}
                   </button>
                 </div>
               </div>
@@ -1825,11 +1871,6 @@ export default function SettingsModal() {
                 <h4 className="text-[17px] font-bold text-gray-800 dark:text-gray-100">AWAI创作工作台</h4>
                 <p className="mt-3 text-[13px] text-gray-500 dark:text-gray-400">版本 {__APP_VERSION__}</p>
                 <p className="mt-1 text-[13px] text-gray-500 dark:text-gray-400">运行模式：{isDesktopRuntime ? '桌面版' : '在线版'}</p>
-                {AWAI_SUPPORT_URL && (
-                  <a href={AWAI_SUPPORT_URL} target="_blank" rel="noopener noreferrer" className="mt-6 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
-                    官方支持
-                  </a>
-                )}
               </div>
             )}
           </div>

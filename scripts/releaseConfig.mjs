@@ -32,6 +32,11 @@ function httpsUrl(env, name, exactOrigin = false) {
   return value
 }
 
+function optionalHttpsUrl(env, name, exactOrigin = false) {
+  if (!env[name]?.trim()) return ''
+  return httpsUrl(env, name, exactOrigin)
+}
+
 function origins(env, name) {
   const values = required(env, name).split(',').map((value) => value.trim())
   for (const value of values) httpsUrl({ [name]: value }, name, true)
@@ -43,8 +48,8 @@ function validateWeb(env) {
   if (required(env, 'VITE_AWAI_RELEASE_MODE') !== 'true') throw new Error('VITE_AWAI_RELEASE_MODE 正式构建必须为 true')
   return {
     sub2ApiOrigins: origins(env, 'VITE_AWAI_SUB2API_ALLOWED_ORIGINS'),
-    supportUrl: httpsUrl(env, 'VITE_AWAI_SUPPORT_URL'),
-    assetServiceUrl: httpsUrl(env, 'VITE_AWAI_ASSET_SERVICE_URL', true),
+    supportUrl: optionalHttpsUrl(env, 'VITE_AWAI_SUPPORT_URL'),
+    assetServiceUrl: optionalHttpsUrl(env, 'VITE_AWAI_ASSET_SERVICE_URL', true),
   }
 }
 

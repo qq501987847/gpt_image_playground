@@ -4,6 +4,7 @@ import {
   DEFAULT_FAL_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
+  DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
   createDefaultGeminiProfile,
   createDefaultOpenAIProfile,
@@ -13,6 +14,7 @@ import {
   importCustomProviderDefinitionFromJson,
   importCustomProviderSettingsFromJson,
   mergeImportedSettings,
+  normalizeApiProfile,
   normalizeSettings,
   switchApiProfileProvider,
   validateApiProfile,
@@ -23,6 +25,16 @@ afterEach(() => {
 })
 
 describe('validateApiProfile', () => {
+  it('requests Base64 only for Sub2API-bound OpenAI Images profiles', () => {
+    expect(normalizeApiProfile(createDefaultOpenAIProfile({ apiMode: 'images', keyId: 'image-key' })).responseFormatB64Json).toBe(true)
+    expect(normalizeApiProfile(createDefaultOpenAIProfile({ apiMode: 'responses', keyId: 'text-key' })).responseFormatB64Json).toBeUndefined()
+    expect(normalizeApiProfile(createDefaultGeminiProfile({ keyId: 'gemini-key' })).responseFormatB64Json).toBeUndefined()
+  })
+
+  it('uses the Responses default model when creating a Responses profile', () => {
+    expect(createDefaultOpenAIProfile({ apiMode: 'responses' }).model).toBe(DEFAULT_RESPONSES_MODEL)
+  })
+
   it('allows empty API URL when API proxy is enabled and available', () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
 
@@ -52,6 +64,21 @@ describe('validateApiProfile', () => {
       model: 'gemini-3.1-flash-image-preview',
     })
     expect(validateApiProfile(normalized.profiles[0])).toBeNull()
+  })
+
+  it('does not restore a Responses text profile as the Agent image profile', () => {
+    const text = createDefaultOpenAIProfile({ id: 'text', apiMode: 'responses', model: 'gpt-5.6-sol' })
+    const image = createDefaultOpenAIProfile({ id: 'image', apiMode: 'images', model: 'gpt-image-2' })
+    const normalized = normalizeSettings({
+      profiles: [text, image],
+      activeProfileId: text.id,
+      agentApiConfigMode: 'hybrid',
+      agentTextProfileId: text.id,
+      agentImageProfileId: text.id,
+    })
+
+    expect(normalized.agentTextProfileId).toBe(text.id)
+    expect(normalized.agentImageProfileId).toBe(image.id)
   })
 })
 

@@ -25,6 +25,13 @@ describe('cloud asset upload client', () => {
     vi.stubEnv('VITE_AWAI_ASSET_SERVICE_URL', 'https://assets.example')
   })
 
+  it('keeps cloud storage disabled while the feature is hidden', async () => {
+    const { CLOUD_ASSETS_ENABLED, isCloudAssetsConfigured } = await import('./cloudAssets')
+
+    expect(CLOUD_ASSETS_ENABLED).toBe(false)
+    expect(isCloudAssetsConfigured()).toBe(false)
+  })
+
   it('retries the same object upload twice and preserves a local-only result after final failure', async () => {
     const request = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response(initialized(), 201))
@@ -75,5 +82,21 @@ describe('cloud asset upload client', () => {
     expect(initBody).toEqual({ taskId: 'task-1', original: { bytes: 3, mediaType: 'image/png' } })
     expect(JSON.stringify(request.mock.calls)).not.toContain('reference')
     expect(JSON.stringify(request.mock.calls)).not.toContain('mask')
+  })
+
+  it('deletes every cloud asset returned for the current user', async () => {
+    const request = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ assets: [{ id: 'asset-1' }, { id: 'asset/2' }] }))
+      .mockResolvedValue(response(null, 204))
+    vi.stubGlobal('fetch', request)
+    const { deleteAllStoredCloudAssets } = await import('./cloudAssets')
+
+    await deleteAllStoredCloudAssets()
+
+    expect(request.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ['https://assets.example/v1/assets', undefined],
+      ['https://assets.example/v1/assets/asset-1', 'DELETE'],
+      ['https://assets.example/v1/assets/asset%2F2', 'DELETE'],
+    ])
   })
 })

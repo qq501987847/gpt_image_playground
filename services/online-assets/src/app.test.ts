@@ -44,6 +44,32 @@ describe('online asset HTTP API', () => {
     expect(verify).not.toHaveBeenCalled()
   })
 
+  it('reports readiness only after the database schema and object bucket probe succeeds', async () => {
+    const ready = vi.fn(async () => undefined)
+    const handler = createHttpHandler({} as AssetService, { verify: vi.fn() }, ['https://awai.example'], ready)
+    const url = await listen(handler)
+    const response = await fetch(`${url}/readyz`, { headers: { Origin: 'https://awai.example' } })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ status: 'ready' })
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://awai.example')
+    expect(ready).toHaveBeenCalledOnce()
+  })
+
+  it('returns 503 when a readiness dependency is unavailable', async () => {
+    const handler = createHttpHandler(
+      {} as AssetService,
+      { verify: vi.fn() },
+      ['https://awai.example'],
+      vi.fn(async () => { throw new Error('database unavailable') }),
+    )
+    const url = await listen(handler)
+    const response = await fetch(`${url}/readyz`)
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ status: 'unavailable' })
+  })
+
   it('rejects claimed-user and verified JWT identity mismatch before asset initialization', async () => {
     const initialize = vi.fn()
     const handler = createHttpHandler(

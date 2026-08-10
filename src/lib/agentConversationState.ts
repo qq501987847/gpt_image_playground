@@ -113,6 +113,7 @@ export function normalizeAgentConversations(value: unknown): AgentConversation[]
         activeRoundId: typeof conversation.activeRoundId === 'string' && roundIds.has(conversation.activeRoundId) ? conversation.activeRoundId : rounds[rounds.length - 1]?.id ?? null,
         createdAt: typeof conversation.createdAt === 'number' ? conversation.createdAt : Date.now(),
         updatedAt: typeof conversation.updatedAt === 'number' ? conversation.updatedAt : Date.now(),
+        unread: conversation.unread === true,
         rounds,
         messages,
       }

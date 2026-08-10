@@ -63,7 +63,7 @@ describe('parameter compatibility', () => {
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: 'auto' }, settings).size).toBe('auto')
   })
 
-  it('normalizes OpenAI-only parameters out of Gemini task state', () => {
+  it('preserves app-level output count while normalizing OpenAI-only Gemini parameters', () => {
     const profile = createDefaultGeminiProfile({ apiKey: 'gemini-key' })
     const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id })
 
@@ -75,7 +75,7 @@ describe('parameter compatibility', () => {
       output_compression: 80,
       transparent_output: true,
     }, settings)).toMatchObject({
-      n: 1,
+      n: 4,
       quality: DEFAULT_PARAMS.quality,
       moderation: DEFAULT_PARAMS.moderation,
       output_compression: DEFAULT_PARAMS.output_compression,

@@ -18,14 +18,18 @@ import ImageContextMenu from './components/ImageContextMenu'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { hydrateSub2ApiProfiles, initializeSub2ApiSession, useSub2ApiSession } from './lib/sub2apiSession'
+import { isSub2ApiKeyUsable } from './lib/sub2api'
 import CloudBackupDisclosure from './components/CloudBackupDisclosure'
+import AgentSetupModal from './components/AgentSetupModal'
 import { isDesktopRuntime } from './lib/runtime'
+import { getAgentProfileValidationError } from './lib/agentProfileValidation'
 
 const releaseMode = import.meta.env.VITE_AWAI_RELEASE_MODE === 'true'
 
 export default function App() {
   const sub2api = useSub2ApiSession()
   const setSettings = useStore((s) => s.setSettings)
+  const settings = useStore((s) => s.settings)
   const appMode = useStore((s) => s.appMode)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
@@ -52,13 +56,52 @@ export default function App() {
     clearAppliedUrlSettings()
 
     initStore()
-    void initializeSub2ApiSession().then(async (session) => {
-      if (session.status !== 'ready') return
-      const state = useStore.getState()
-      const profiles = await hydrateSub2ApiProfiles(state.settings.profiles)
-      state.setSettings({ ...state.settings, profiles })
-    })
+    let refreshing = false
+    const refreshSub2Api = async (openSetupIfNeeded = false) => {
+      if (refreshing) return
+      refreshing = true
+      try {
+        const session = await initializeSub2ApiSession()
+        if (session.status !== 'ready') return
+        const state = useStore.getState()
+        const profiles = await hydrateSub2ApiProfiles(state.settings.profiles)
+        state.setSettings({ ...state.settings, profiles })
+        if (!openSetupIfNeeded) return
+
+        const hasBoundProfile = profiles.some((profile) =>
+          session.keys.some((key) => key.id === profile.keyId && isSub2ApiKeyUsable(key)),
+        )
+        if (session.context && session.keys.some(isSub2ApiKeyUsable) && !hasBoundProfile) {
+          useStore.getState().setAppMode('agent')
+        }
+      } finally {
+        refreshing = false
+      }
+    }
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshSub2Api()
+    }
+    void refreshSub2Api(true)
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
   }, [setSettings])
+
+  useEffect(() => {
+    if (isDesktopRuntime || sub2api.status !== 'ready' || appMode !== 'agent') return
+    const error = getAgentProfileValidationError(settings, {
+      requireHybrid: true,
+      keys: sub2api.keys,
+    })
+    if (!error) return
+
+    const state = useStore.getState()
+    state.setAppMode('gallery')
+    state.setAgentSetupOpen(true)
+  }, [appMode, settings, sub2api.keys, sub2api.status])
 
   useEffect(() => {
     const preventPageImageDrag = (e: DragEvent) => {
@@ -81,17 +124,19 @@ export default function App() {
 
   return (
     <>
-      <Header />
-      {appMode === 'agent' ? (
-        <AgentWorkspace />
-      ) : (
-        <main data-home-main data-drag-select-surface className="pb-48">
-          <div className="safe-area-x max-w-7xl mx-auto">
-            <SearchBar />
-            {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
-          </div>
-        </main>
-      )}
+      <div className={appMode === 'agent' ? 'flex h-[100dvh] min-h-0 flex-col overflow-hidden' : 'contents'}>
+        <Header />
+        {appMode === 'agent' ? (
+          <AgentWorkspace />
+        ) : (
+          <main data-home-main data-drag-select-surface className="pb-48">
+            <div className="safe-area-x max-w-7xl mx-auto">
+              <SearchBar />
+              {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
+            </div>
+          </main>
+        )}
+      </div>
       <InputBar />
       <DetailModal />
       <Lightbox />
@@ -102,6 +147,7 @@ export default function App() {
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />
+      <AgentSetupModal />
       {!isDesktopRuntime && <CloudBackupDisclosure />}
     </>
   )

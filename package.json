@@ -21,6 +21,7 @@
     "release:check:service": "node scripts/releaseConfig.mjs check service",
     "release:prepare:desktop": "node scripts/releaseConfig.mjs prepare-desktop",
     "release:check:artifact": "node scripts/releaseConfig.mjs check-artifact dist",
+    "release:check:online-assets-artifact": "node scripts/verifyOnlineAssetRelease.mjs",
     "release:hashes": "node scripts/releaseHashes.mjs release-out",
     "release:smoke:live": "node scripts/liveSmoke.mjs",
     "build:release:web": "npm run release:check:web && npm run build && npm run release:check:artifact",

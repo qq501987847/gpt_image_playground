@@ -68,9 +68,11 @@ jobs:
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
-          mkdir -p release-out/online-assets
+          mkdir -p release-out/online-assets/services
           tar -czf "release-out/awai-web-${version}.tar.gz" -C dist .
-          cp -R services/online-assets/dist services/online-assets/migrations services/online-assets/Dockerfile package.json package-lock.json LICENSE release-out/online-assets/
+          cp -R services/online-assets release-out/online-assets/services/
+          cp package.json package-lock.json LICENSE release-out/online-assets/
+          node scripts/verifyOnlineAssetRelease.mjs release-out/online-assets
           tar -czf "release-out/awai-online-assets-${version}.tar.gz" -C release-out online-assets
           rm -rf release-out/online-assets
 

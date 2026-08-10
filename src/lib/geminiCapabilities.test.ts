@@ -16,8 +16,20 @@ describe('Gemini image capabilities', () => {
     expect(GEMINI_IMAGE_SIZES).toEqual(['auto', '1K', '2K', '4K'])
   })
 
-  it('adds extreme ratios only to the Flash preset', () => {
+  it('gives Pro every Flash ratio except 8:1, 1:8, 4:1 and 1:4', () => {
     expect(getGeminiAspectRatios('gemini-3.1-flash-image-preview')).toEqual(GEMINI_FLASH_ASPECT_RATIOS)
+    expect(getGeminiAspectRatios('gemini-3-pro-image-preview')).toEqual([
+      '1:1',
+      '16:9',
+      '9:16',
+      '4:3',
+      '3:4',
+      '3:2',
+      '2:3',
+      '5:4',
+      '4:5',
+      '21:9',
+    ])
     expect(getGeminiAspectRatios('gemini-3-pro-image-preview')).toEqual(GEMINI_STANDARD_ASPECT_RATIOS)
     expect(GEMINI_FLASH_ASPECT_RATIOS.slice(-4)).toEqual(['8:1', '4:1', '1:4', '1:8'])
   })

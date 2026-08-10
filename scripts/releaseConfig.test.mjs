@@ -39,6 +39,18 @@ describe('release configuration', () => {
     expect(() => validateReleaseEnv({ ...env, AWAI_SUB2API_ALLOWED_ORIGINS: 'https://other.example' })).toThrow('不一致')
   })
 
+  it('allows hidden Web features to omit support and asset service URLs', () => {
+    const result = validateReleaseEnv({
+      ...env,
+      VITE_AWAI_SUPPORT_URL: '',
+      VITE_AWAI_ASSET_SERVICE_URL: '',
+    }, 'web')
+
+    expect(result.web.supportUrl).toBe('')
+    expect(result.web.assetServiceUrl).toBe('')
+    expect(() => validateReleaseEnv({ ...env, VITE_AWAI_ASSET_SERVICE_URL: 'http://assets.example' }, 'web')).toThrow('HTTPS')
+  })
+
   it('writes a Tauri override that explicitly disables updater artifacts', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'awai-release-config-'))
     dirs.push(dir)

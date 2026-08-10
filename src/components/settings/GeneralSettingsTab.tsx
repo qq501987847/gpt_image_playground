@@ -1,4 +1,5 @@
 import type { AppSettings } from '../../types'
+import { isDesktopRuntime } from '../../lib/runtime'
 import Select from '../Select'
 
 interface GeneralSettingsTabProps {
@@ -74,7 +75,7 @@ export default function GeneralSettingsTab({
           开启后，提交成功创建任务时会清空提示词和参考图。
         </div>
       </div>
-      <div className="block">
+      {isDesktopRuntime && <div className="block">
         <div className="mb-1 flex items-center justify-between gap-3">
           <span className="block text-sm text-gray-600 dark:text-gray-300">使用压缩包进行的批量下载途径</span>
           <button
@@ -88,26 +89,30 @@ export default function GeneralSettingsTab({
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
           {zipDownloadRouteSummary}
         </div>
-      </div>
+      </div>}
       <div className="block">
         <div className="mb-1 flex items-center justify-between">
-          <span className="block text-sm text-gray-600 dark:text-gray-300">重启后加载上次的输入框</span>
+          <span className="block text-sm text-gray-600 dark:text-gray-300">
+            {isDesktopRuntime ? '重启后加载上次的输入框' : '保留输入草稿'}
+          </span>
           <button
             type="button"
             onClick={() => commitSettings({ ...draft, persistInputOnRestart: !draft.persistInputOnRestart })}
             className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.persistInputOnRestart ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
             role="switch"
             aria-checked={draft.persistInputOnRestart}
-            aria-label="重启后加载上次的输入框"
+            aria-label={isDesktopRuntime ? '重启后加载上次的输入框' : '保留输入草稿'}
           >
             <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.persistInputOnRestart ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
           </button>
         </div>
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-          关闭后，不再持久化提示词和参考图，下次启动会使用空输入框。
+          {isDesktopRuntime
+            ? '关闭后，不再持久化提示词和参考图，下次启动会使用空输入框。'
+            : '开启后，刷新或下次访问时会恢复未提交的提示词和参考图。'}
         </div>
       </div>
-      <div className="block">
+      {isDesktopRuntime && <div className="block">
         <div className="mb-1 flex items-center justify-between">
           <span className="block text-sm text-gray-600 dark:text-gray-300">复用配置时临时复用该任务的 API 配置</span>
           <button
@@ -124,8 +129,8 @@ export default function GeneralSettingsTab({
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
           开启后，复用历史任务时会临时使用该任务的 API 配置，找不到该配置时提交会提示；关闭后，会继续使用当前的 API 配置。
         </div>
-      </div>
-      <div className="block">
+      </div>}
+      {isDesktopRuntime && <div className="block">
         <div className="mb-1 flex items-center justify-between">
           <span className="block text-sm text-gray-600 dark:text-gray-300">成功任务仍然展示重试按钮</span>
           <button
@@ -142,8 +147,8 @@ export default function GeneralSettingsTab({
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
           开启后，即使任务成功生成，也会在任务卡片和详情页显示重试按钮。
         </div>
-      </div>
-      <div className="block">
+      </div>}
+      {isDesktopRuntime && <div className="block">
         <div className="mb-1 flex items-center justify-between">
           <span className="block text-sm text-gray-600 dark:text-gray-300">允许模型改写优化提示词</span>
           <button
@@ -160,7 +165,7 @@ export default function GeneralSettingsTab({
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
           开启后，Codex CLI 兼容模式下的 Image API 请求和所有 Responses API 请求都不再附加防改写提示词，允许模型按服务商策略优化提示词。
         </div>
-      </div>
+      </div>}
       <div className="block">
         <div className="mb-1 flex items-center justify-between">
           <span className="block text-sm text-gray-600 dark:text-gray-300">任务完成后发送系统通知</span>
@@ -179,7 +184,7 @@ export default function GeneralSettingsTab({
           开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。
         </div>
       </div>
-      <div className="block">
+      {isDesktopRuntime && <div className="block">
         <div className="mb-1 flex items-center justify-between">
           <span className="block text-sm text-gray-600 dark:text-gray-300">发送消息后自动滚动到底部</span>
           <button
@@ -196,8 +201,8 @@ export default function GeneralSettingsTab({
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
           开启后，在 Agent 模式发送消息成功后会自动滚动到对话底部。
         </div>
-      </div>
-      <div className="block">
+      </div>}
+      {isDesktopRuntime && <div className="block">
         <div className="mb-1 flex items-center justify-between">
           <span className="block text-sm text-gray-600 dark:text-gray-300">公式输出提示</span>
           <button
@@ -214,7 +219,7 @@ export default function GeneralSettingsTab({
         <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
           开启后，Agent 会被要求使用 <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[0.9em] text-gray-700 dark:bg-white/10 dark:text-gray-200">$...$</code> 和 <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[0.9em] text-gray-700 dark:bg-white/10 dark:text-gray-200">$$...$$</code> 输出数学公式，确保渲染效果正常。
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

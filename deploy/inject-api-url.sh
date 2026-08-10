@@ -17,11 +17,15 @@ require_https_url() {
     esac
 }
 
-require_https_url AWAI_SUPPORT_URL "$AWAI_SUPPORT_URL"
-require_https_url AWAI_ASSET_SERVICE_URL "$AWAI_ASSET_SERVICE_URL"
-case "${AWAI_ASSET_SERVICE_URL#https://}" in
-    *'/'*|*'?'*|*'#'*|*'@'*) fail_release_config "AWAI_ASSET_SERVICE_URL 必须是精确 HTTPS origin" ;;
-esac
+if [ -n "$AWAI_SUPPORT_URL" ]; then
+    require_https_url AWAI_SUPPORT_URL "$AWAI_SUPPORT_URL"
+fi
+if [ -n "$AWAI_ASSET_SERVICE_URL" ]; then
+    require_https_url AWAI_ASSET_SERVICE_URL "$AWAI_ASSET_SERVICE_URL"
+    case "${AWAI_ASSET_SERVICE_URL#https://}" in
+        *'/'*|*'?'*|*'#'*|*'@'*) fail_release_config "AWAI_ASSET_SERVICE_URL 必须是精确 HTTPS origin" ;;
+    esac
+fi
 
 old_ifs=$IFS
 IFS=,

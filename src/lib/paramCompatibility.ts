@@ -23,31 +23,32 @@ export function normalizeParamsForSettings(
     n: Math.min(outputImageLimit, Math.max(1, params.n || DEFAULT_PARAMS.n)),
   }
 
+  const modelParams = nextParams
+
   if (activeProfile.provider === 'openai' && activeProfile.codexCli) {
-    nextParams.size = normalizeCodexCliImageSize(nextParams.size)
-    nextParams.quality = DEFAULT_PARAMS.quality
+    modelParams.size = normalizeCodexCliImageSize(modelParams.size)
+    modelParams.quality = DEFAULT_PARAMS.quality
   }
 
   if (activeProfile.provider === 'fal') {
-    if (!options.hasInputImages && nextParams.size === 'auto') nextParams.size = DEFAULT_FAL_IMAGE_SIZE
-    if (nextParams.quality === 'auto') nextParams.quality = 'high'
-    nextParams.moderation = DEFAULT_PARAMS.moderation
-    nextParams.output_compression = DEFAULT_PARAMS.output_compression
+    if (!options.hasInputImages && modelParams.size === 'auto') modelParams.size = DEFAULT_FAL_IMAGE_SIZE
+    if (modelParams.quality === 'auto') modelParams.quality = 'high'
+    modelParams.moderation = DEFAULT_PARAMS.moderation
+    modelParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
   if (activeProfile.provider === 'gemini') {
-    nextParams.n = 1
-    nextParams.transparent_output = false
-    nextParams.output_compression = DEFAULT_PARAMS.output_compression
-    nextParams.quality = DEFAULT_PARAMS.quality
-    nextParams.moderation = DEFAULT_PARAMS.moderation
+    modelParams.transparent_output = false
+    modelParams.output_compression = DEFAULT_PARAMS.output_compression
+    modelParams.quality = DEFAULT_PARAMS.quality
+    modelParams.moderation = DEFAULT_PARAMS.moderation
   }
 
-  if (nextParams.output_format === 'png') {
-    nextParams.output_compression = DEFAULT_PARAMS.output_compression
+  if (modelParams.output_format === 'png') {
+    modelParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
-  return nextParams
+  return modelParams
 }
 
 export function getChangedParams(current: TaskParams, next: TaskParams): Partial<TaskParams> {

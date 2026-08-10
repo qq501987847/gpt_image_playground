@@ -9,7 +9,29 @@ export interface IframeBootstrapContext {
 }
 
 function getAllowedOrigins(value = import.meta.env.VITE_AWAI_SUB2API_ALLOWED_ORIGINS || '') {
-  return value.split(',').map((item: string) => item.trim()).filter((item: string) => /^https:\/\//.test(item))
+  return value.split(',').map((item: string) => item.trim()).filter((item: string) => {
+    try {
+      const url = new URL(item)
+      return url.protocol === 'https:' && url.origin === item && !url.username && !url.password
+    } catch {
+      return false
+    }
+  })
+}
+
+function normalizeDevelopmentOrigin(value: string) {
+  try {
+    const url = new URL(value)
+    const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
+    return url.protocol === 'http:' && url.origin === value && loopback && !url.username && !url.password ? url.origin : ''
+  } catch {
+    return ''
+  }
+}
+
+function getDevelopmentOrigin(value = import.meta.env.VITE_AWAI_DEV_SUB2API_ORIGIN || '') {
+  if (!import.meta.env.DEV || import.meta.env.VITE_AWAI_RELEASE_MODE === 'true') return ''
+  return normalizeDevelopmentOrigin(value)
 }
 
 export function bootstrapIframeContext(
@@ -17,7 +39,9 @@ export function bootstrapIframeContext(
   storage: Pick<Storage, 'getItem' | 'setItem'> = window.sessionStorage,
   allowedOrigins = getAllowedOrigins(),
   replaceUrl: (url: string) => void = (url) => window.history.replaceState(null, '', url),
+  developmentOrigin = getDevelopmentOrigin(),
 ): IframeBootstrapContext | null {
+  const devOrigin = normalizeDevelopmentOrigin(developmentOrigin)
   const params = new URLSearchParams(location.search)
   const urlToken = params.get('token') || ''
   if (urlToken) {
@@ -30,11 +54,12 @@ export function bootstrapIframeContext(
   let origin = ''
   try {
     const url = new URL(srcHost)
-    origin = url.origin === srcHost.replace(/\/$/, '') && url.protocol === 'https:' ? url.origin : ''
+    const exactOrigin = url.origin === srcHost.replace(/\/$/, '') && !url.username && !url.password
+    origin = exactOrigin && (url.protocol === 'https:' || url.origin === devOrigin) ? url.origin : ''
   } catch {
     return null
   }
-  if (!userId || !origin || !allowedOrigins.includes(origin)) return null
+  if (!userId || !origin || (!allowedOrigins.includes(origin) && origin !== devOrigin)) return null
   const tokenKey = `awai-sub2api-token:${encodeURIComponent(origin)}:${encodeURIComponent(userId)}`
   const token = urlToken || storage.getItem(tokenKey) || ''
   if (!token) return null

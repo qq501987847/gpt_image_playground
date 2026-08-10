@@ -129,6 +129,7 @@ export interface TaskParams {
   quality: 'auto' | 'low' | 'medium' | 'high'
   output_format: 'png' | 'jpeg' | 'webp'
   output_compression: number | null
+  background: 'auto' | 'opaque'
   moderation: 'auto' | 'low'
   n: number
   transparent_output: boolean
@@ -141,11 +142,12 @@ export const DEFAULT_PARAMS: TaskParams = {
   quality: 'auto',
   output_format: 'png',
   output_compression: null,
+  background: 'auto',
   moderation: 'auto',
   n: 1,
   transparent_output: false,
   geminiAspectRatio: 'auto',
-  geminiImageSize: 'auto',
+  geminiImageSize: '2K',
 }
 
 // ===== 输入图片（UI 层面） =====
@@ -313,6 +315,8 @@ export interface AgentConversation {
   activeRoundId?: string | null
   createdAt: number
   updatedAt: number
+  /** 后台完成的对话在进入前保留提示点 */
+  unread?: boolean
   rounds: AgentRound[]
   messages: AgentMessage[]
 }

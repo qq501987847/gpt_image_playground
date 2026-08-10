@@ -13,6 +13,7 @@ import type {
   CustomProviderSubmitMapping,
   CustomProviderTemplate,
 } from '../types'
+import { isImageGenerationProfile, isResponsesProfile } from './modelCapabilities'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, DEFAULT_ZIP_DOWNLOAD_ROUTES, ZIP_DOWNLOAD_ROUTE_VALUES } from '../types'
 import { shouldUseApiProxy } from './devProxy'
 import { normalizeReasoningEffort, normalizeStreamPartialImages, parseDefaultApiUrl } from './defaultApiUrl'
@@ -105,7 +106,7 @@ function normalizeAgentApiConfigMode(value: unknown): AgentApiConfigMode {
 }
 
 export function isAgentTextApiProfile(profile: ApiProfile): boolean {
-  return profile.provider === 'openai' && profile.apiMode === 'responses'
+  return isResponsesProfile(profile)
 }
 
 function isCustomProviderTemplate(value: unknown): value is CustomProviderTemplate {
@@ -315,6 +316,7 @@ export function normalizeCustomProviderDefinitions(input: unknown): CustomProvid
 export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
   const apiMode = overrides.apiMode ?? DEFAULT_API_URL_PATCH?.apiMode ?? 'images'
   const streamImages = overrides.streamImages ?? DEFAULT_API_URL_PATCH?.streamImages ?? getDefaultStreamImages('openai', apiMode)
+  const model = overrides.model ?? DEFAULT_API_URL_PATCH?.model ?? (apiMode === 'responses' ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL)
 
   return {
     id: DEFAULT_OPENAI_PROFILE_ID,
@@ -322,7 +324,7 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     provider: 'openai',
     baseUrl: DEFAULT_BASE_URL,
     apiKey: DEFAULT_API_URL_PATCH?.apiKey ?? '',
-    model: DEFAULT_API_URL_PATCH?.model ?? DEFAULT_IMAGES_MODEL,
+    model,
     timeout: DEFAULT_API_TIMEOUT,
     reasoningEffort: DEFAULT_API_URL_PATCH?.reasoningEffort,
     codexCli: DEFAULT_API_URL_PATCH?.codexCli ?? false,
@@ -511,6 +513,7 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
   const streamImages = provider === 'openai'
     ? typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages
     : false
+  const keyId = typeof record.keyId === 'string' && record.keyId ? record.keyId : null
 
   return {
     ...defaults,
@@ -525,10 +528,10 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     reasoningEffort: normalizeReasoningEffort(record.reasoningEffort, defaults.reasoningEffort),
     codexCli: Boolean(record.codexCli),
     apiProxy: typeof record.apiProxy === 'boolean' ? record.apiProxy : defaults.apiProxy,
-    responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
+    responseFormatB64Json: record.responseFormatB64Json === true || (provider === 'openai' && apiMode === 'images' && Boolean(keyId)) ? true : undefined,
     streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
-    keyId: typeof record.keyId === 'string' ? record.keyId : null,
+    keyId,
     credentialRebindRequired: record.credentialRebindRequired === true,
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds),
   }
@@ -577,9 +580,10 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
   const agentTextProfileId = typeof record.agentTextProfileId === 'string' && profiles.some((p) => p.id === record.agentTextProfileId && isAgentTextApiProfile(p))
     ? record.agentTextProfileId
     : (isAgentTextApiProfile(active) ? active.id : firstAgentTextProfile?.id ?? null)
-  const agentImageProfileId = typeof record.agentImageProfileId === 'string' && profiles.some((p) => p.id === record.agentImageProfileId)
+  const firstAgentImageProfile = profiles.find(isImageGenerationProfile)
+  const agentImageProfileId = typeof record.agentImageProfileId === 'string' && profiles.some((p) => p.id === record.agentImageProfileId && isImageGenerationProfile(p))
     ? record.agentImageProfileId
-    : active.id
+    : (isImageGenerationProfile(active) ? active.id : firstAgentImageProfile?.id ?? null)
 
   return {
     baseUrl: active.baseUrl,

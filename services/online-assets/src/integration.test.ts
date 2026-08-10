@@ -1,11 +1,11 @@
-import { readFile } from 'node:fs/promises'
-
 import { GetBucketLifecycleConfigurationCommand, S3Client } from '@aws-sdk/client-s3'
 import { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { AssetService, RETENTION_MS, UPLOAD_URL_SECONDS } from './domain.js'
+import { runMigrations } from './migrations.js'
 import { PostgresAssetRepository } from './postgres.js'
+import { createReadinessCheck } from './readiness.js'
 import { S3ObjectStore } from './s3.js'
 
 const enabled = process.env.AWAI_INTEGRATION_TEST === '1'
@@ -22,8 +22,8 @@ const client = new S3Client({
 
 describe.runIf(enabled)('online asset PostgreSQL/S3 integration', () => {
   beforeAll(async () => {
-    const migration = await readFile(new URL('../migrations/001_temporary_assets.sql', import.meta.url), 'utf8')
-    await pool.query(migration)
+    await runMigrations(pool)
+    await createReadinessCheck(pool, client, bucket)()
     await pool.query('TRUNCATE temporary_assets')
   })
 
@@ -56,9 +56,19 @@ describe.runIf(enabled)('online asset PostgreSQL/S3 integration', () => {
       const response = await fetch(upload.url, { method: 'PUT', headers: { 'content-type': upload.mediaType }, body: bytes })
       expect(response.ok).toBe(true)
     }
-    await service.confirm(identity, initialized.record.id)
+    const confirmed = await service.confirm(identity, initialized.record.id)
+    expect(confirmed.original.objectKey).toContain('/available/')
     expect(await repository.getConfirmedBytes(identity.sourceOrigin, identity.userId, now)).toBe(7)
-    expect(await service.list(identity)).toHaveLength(1)
+    const listed = await service.list(identity)
+    expect(listed).toHaveLength(1)
+    const replay = await fetch(initialized.uploads.find((item) => item.kind === 'original')!.url, {
+      method: 'PUT',
+      headers: { 'content-type': 'image/png' },
+      body: new Uint8Array([9, 9, 9, 9]),
+    })
+    expect(replay.ok).toBe(true)
+    const downloaded = await fetch(listed[0].downloads.original)
+    expect([...new Uint8Array(await downloaded.arrayBuffer())]).toEqual([1, 2, 3, 4])
 
     now = new Date(now.getTime() + RETENTION_MS + 1)
     expect(await service.cleanup()).toBe(1)

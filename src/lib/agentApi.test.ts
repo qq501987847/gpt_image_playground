@@ -351,7 +351,7 @@ describe('callAgentResponsesApi', () => {
     expect(result.outputItems?.[0]).toMatchObject({ type: 'web_search_call', status: 'completed' })
   })
 
-  it('injects configurable math formatting instructions', async () => {
+  it('always injects math formatting instructions online', async () => {
     const createResponse = () => new Response(JSON.stringify({
       output: [{
         type: 'message',
@@ -386,7 +386,7 @@ describe('callAgentResponsesApi', () => {
     })
 
     body = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))
-    expect(body.instructions).not.toContain('## Math formatting')
+    expect(body.instructions).toContain('## Math formatting')
   })
 
   it("does not duplicate the assistant message item when response.completed lacks an item id", async () => {

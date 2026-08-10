@@ -42,7 +42,12 @@ function serialize(record: AssetRecord, downloads?: { original: string; thumbnai
   }
 }
 
-export function createHttpHandler(service: AssetService, verifier: IdentityVerifier, webOrigins: string[]) {
+export function createHttpHandler(
+  service: AssetService,
+  verifier: IdentityVerifier,
+  webOrigins: string[],
+  checkReadiness: () => Promise<void> = async () => { throw new Error('readiness probe is not configured') },
+) {
   const allowedWebOrigins = new Set(webOrigins)
   return async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', 'http://service.local')
@@ -59,6 +64,15 @@ export function createHttpHandler(service: AssetService, verifier: IdentityVerif
     }
     if (req.method === 'GET' && url.pathname === '/healthz') {
       send(res, 200, { status: 'ok' })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/readyz') {
+      try {
+        await checkReadiness()
+        send(res, 200, { status: 'ready' })
+      } catch {
+        send(res, 503, { status: 'unavailable' })
+      }
       return
     }
 

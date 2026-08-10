@@ -3,6 +3,7 @@ import { dismissAllTooltips } from '../../lib/tooltipDismiss'
 import Select from '../Select'
 import ButtonTooltip from './buttonTooltip'
 import { GEMINI_IMAGE_SIZES, getGeminiAspectRatios } from '../../lib/geminiCapabilities'
+import { getGptImage2SizeOptions, getModelCapability, GPT_IMAGE_2_ASPECT_RATIOS, GPT_IMAGE_2_RESOLUTIONS, modelSupportsField, type ModelField } from '../../lib/modelCapabilities'
 
 interface HintTooltipState {
   visible: boolean
@@ -23,11 +24,6 @@ export default function InputParamsPanel({
   displaySize,
   qualityOptions,
   selectClass,
-  transparentOutputAvailable,
-  showTransparentOutputControl,
-  transparentOutputEnabled,
-  transparentOutputHint,
-  onTransparentOutputMenuOpenChange,
   compressionHint,
   compressionDisabled,
   outputCompressionInput,
@@ -53,6 +49,9 @@ export default function InputParamsPanel({
   sizeHint,
   qualityHint,
   onOpenSizePicker,
+  showAdvanced = true,
+  advancedOnly = false,
+  panel = false,
 }: {
   cols: string
   params: TaskParams
@@ -64,11 +63,6 @@ export default function InputParamsPanel({
   displaySize: string
   qualityOptions: Array<{ label: string; value: string }>
   selectClass: string
-  transparentOutputAvailable: boolean
-  showTransparentOutputControl: boolean
-  transparentOutputEnabled: boolean
-  transparentOutputHint: HintTooltipState
-  onTransparentOutputMenuOpenChange: (open: boolean) => void
   compressionHint: HintTooltipState
   compressionDisabled: boolean
   outputCompressionInput: string
@@ -94,40 +88,69 @@ export default function InputParamsPanel({
   sizeHint: HintTooltipState
   qualityHint: HintTooltipState
   onOpenSizePicker: () => void
+  showAdvanced?: boolean
+  advancedOnly?: boolean
+  panel?: boolean
 }) {
+  const capability = activeProfile.provider === 'openai' || activeProfile.provider === 'gemini'
+    ? getModelCapability(activeProfile.provider, activeProfile.model, activeProfile.apiMode)
+    : {
+        protocol: 'openai' as const,
+        verified: true,
+        fields: ['size', 'quality', 'n', 'output_format', 'output_compression', 'moderation', 'transparent_output'] as ModelField[],
+        sizes: [],
+        qualities: [],
+      }
+  if (panel) {
+    const buttonClass = (selected: boolean) => `flex min-h-10 items-center justify-center rounded-lg border px-2 text-xs transition-[transform,background-color,color] active:scale-[0.96] ${selected ? 'border-gray-700 bg-gray-700 text-white dark:border-white dark:bg-white/15' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-white/[0.14] dark:text-gray-300 dark:hover:bg-white/[0.06]'}`
+    const gptImage2Ratio = !params.geminiAspectRatio || params.geminiAspectRatio === 'auto' ? '1:1' : params.geminiAspectRatio
+    const gptImage2Sizes = !isGeminiProvider
+      ? getGptImage2SizeOptions(gptImage2Ratio)
+      : {}
+    return <div className="space-y-3 text-xs">
+      {modelSupportsField(capability, 'quality') && <section><p className="mb-1 text-gray-500 dark:text-gray-400">质量</p><div className="grid grid-cols-4 gap-2">{capability.qualities.map((value) => <button key={value} type="button" onClick={() => setParams({ quality: value })} className={buttonClass(params.quality === value)}>{value === 'auto' ? '自动' : value === 'low' ? '低' : value === 'medium' ? '中' : '高'}</button>)}</div></section>}
+      {modelSupportsField(capability, 'output_format') && <section><p className="mb-1 text-gray-500 dark:text-gray-400">格式</p><div className="grid grid-cols-3 gap-2">{(['png', 'jpeg', 'webp'] as const).map((value) => <button key={value} type="button" onClick={() => setParams({ output_format: value, transparent_output: false, ...(value === 'png' ? { output_compression: null } : {}) })} className={buttonClass(params.output_format === value)}>{value === 'png' ? 'PNG' : value === 'jpeg' ? 'JPEG' : 'WebP'}</button>)}</div></section>}
+      {modelSupportsField(capability, 'size') && !capability.aspectRatios && <section><p className="mb-1 text-gray-500 dark:text-gray-400">分辨率</p><div className="grid grid-cols-4 gap-2">{capability.sizes.map((value) => <button key={value} type="button" onClick={() => setParams({ size: value })} className={buttonClass(params.size === value)}>{value === 'auto' ? '自动' : value}</button>)}</div></section>}
+      {modelSupportsField(capability, 'geminiImageSize') && <section><p className="mb-1 text-gray-500 dark:text-gray-400">{isGeminiProvider ? '清晰度' : '分辨率'}</p><div className={`grid gap-2 ${isGeminiProvider ? 'grid-cols-4' : 'grid-cols-3'}`}>{(isGeminiProvider ? (capability.verified ? GEMINI_IMAGE_SIZES : ['auto']) : GPT_IMAGE_2_RESOLUTIONS.filter((value) => gptImage2Sizes[value])).map((value) => {
+        const size = gptImage2Sizes[value]
+        return <button key={value} type="button" onClick={() => setParams({ geminiImageSize: value as TaskParams['geminiImageSize'] })} className={`${buttonClass((params.geminiImageSize ?? '2K') === value)} ${size ? 'min-h-14 flex-col gap-0.5' : ''}`}><span>{value === 'auto' ? '自动' : value}</span>{size && <span className="font-mono text-[10px] opacity-70">{size.replace('x', '×')}</span>}</button>
+      })}</div></section>}
+      {modelSupportsField(capability, 'geminiAspectRatio') && <section><p className="mb-1 text-gray-500 dark:text-gray-400">比例</p><div className="grid grid-cols-5 gap-2">{(isGeminiProvider ? ['auto', ...(capability.verified ? getGeminiAspectRatios(activeProfile.model) : [])] : GPT_IMAGE_2_ASPECT_RATIOS).map((value) => <button key={value} type="button" onClick={() => setParams({
+        geminiAspectRatio: value,
+        ...(!isGeminiProvider && !getGptImage2SizeOptions(value)[params.geminiImageSize ?? '2K'] ? { geminiImageSize: '2K' as const } : {}),
+      })} className={buttonClass((isGeminiProvider ? params.geminiAspectRatio ?? 'auto' : gptImage2Ratio) === value)}>{value === 'auto' ? '自动' : value}</button>)}</div></section>}
+      {(isGeminiProvider || modelSupportsField(capability, 'n')) && <section><div className="mb-1 flex items-center justify-between gap-3 text-gray-500 dark:text-gray-400"><p>生成数量</p><span className="shrink-0 tabular-nums">最大数量 {outputImageLimit}</span></div><div className="grid grid-cols-[repeat(3,minmax(0,1fr))_5rem] gap-2">{[1, 2, 4].filter((value) => value <= outputImageLimit).map((value) => <button key={value} type="button" onClick={() => setParams({ n: value })} className={buttonClass(params.n === value)}>{value}张</button>)}<input value={nInput} onChange={(event) => handleNInputChange(event.target.value)} onBlur={commitN} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} type="number" inputMode="numeric" min={1} max={outputImageLimit} step={1} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-2 text-center text-xs tabular-nums outline-none dark:border-white/[0.14] dark:bg-white/[0.03]" aria-label={`自定义生成数量，范围 1 到 ${outputImageLimit}`} /></div></section>}
+    </div>
+  }
   if (isGeminiProvider) {
+    if (advancedOnly) return null
+    const selectButtonClass = (selected: boolean) => `flex h-8 items-center justify-center rounded-lg border text-xs transition-[transform,background-color,color] active:scale-[0.96] ${selected ? 'border-gray-700 bg-gray-700 text-white dark:border-white dark:bg-white/15' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-white/[0.14] dark:text-gray-300 dark:hover:bg-white/[0.06]'}`
+    const ratios = capability.verified ? getGeminiAspectRatios(activeProfile.model) : []
     return (
-      <div className={`grid ${cols} gap-2 text-xs flex-1`}>
-        <label className="flex min-w-0 flex-col gap-0.5">
-          <span className="ml-1 text-gray-400 dark:text-gray-500">比例</span>
-          <Select
-            value={params.geminiAspectRatio ?? 'auto'}
-            onChange={(value) => setParams({ geminiAspectRatio: String(value) })}
-            options={[
-              { label: '自动', value: 'auto' },
-              ...getGeminiAspectRatios(activeProfile.model).map((value) => ({ label: value, value })),
-            ]}
-            showValueTooltips={false}
-            className={selectClass}
-          />
-        </label>
-        <label className="flex min-w-0 flex-col gap-0.5">
-          <span className="ml-1 text-gray-400 dark:text-gray-500">分辨率</span>
-          <Select
-            value={params.geminiImageSize ?? 'auto'}
-            onChange={(value) => setParams({ geminiImageSize: value as TaskParams['geminiImageSize'] })}
-            options={GEMINI_IMAGE_SIZES.map((value) => ({ label: value === 'auto' ? '自动' : value, value }))}
-            showValueTooltips={false}
-            className={selectClass}
-          />
-        </label>
+      <div className="space-y-3 text-xs">
+        <section>
+          <p className="mb-1 text-gray-500 dark:text-gray-400">质量</p>
+          <div className="grid grid-cols-4 gap-2">{(['auto', 'low', 'medium', 'high'] as const).map((value) => <button key={value} type="button" onClick={() => setParams({ quality: value })} className={selectButtonClass(params.quality === value)}>{value === 'auto' ? '自动' : value === 'low' ? '低' : value === 'medium' ? '中' : '高'}</button>)}</div>
+        </section>
+        {modelSupportsField(capability, 'geminiImageSize') && <section>
+          <p className="mb-1 text-gray-500 dark:text-gray-400">清晰度</p>
+          <div className="grid grid-cols-4 gap-2">{(capability.verified ? GEMINI_IMAGE_SIZES : ['auto']).map((value) => <button key={value} type="button" onClick={() => setParams({ geminiImageSize: value as TaskParams['geminiImageSize'] })} className={selectButtonClass((params.geminiImageSize ?? 'auto') === value)}>{value === 'auto' ? '自动' : value}</button>)}</div>
+        </section>}
+        {modelSupportsField(capability, 'geminiAspectRatio') && <section>
+          <p className="mb-1 text-gray-500 dark:text-gray-400">比例</p>
+          <div className="grid grid-cols-5 gap-2"><button type="button" onClick={() => setParams({ geminiAspectRatio: 'auto' })} className={selectButtonClass((params.geminiAspectRatio ?? 'auto') === 'auto')}>自动</button>{ratios.map((value) => <button key={value} type="button" onClick={() => setParams({ geminiAspectRatio: value })} className={selectButtonClass(params.geminiAspectRatio === value)}>{value}</button>)}</div>
+        </section>}
+        <section>
+          <p className="mb-1 text-gray-500 dark:text-gray-400">生成数量</p>
+          <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_5rem] gap-2">{[1, 2, 4].map((value) => <button key={value} type="button" onClick={() => setParams({ n: value })} className={selectButtonClass(params.n === value)}>{value}张</button>)}<input value={nInput} onChange={(event) => handleNInputChange(event.target.value)} onBlur={commitN} type="number" min={1} max={10} className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-center text-xs outline-none dark:border-white/[0.14] dark:bg-white/[0.03]" aria-label="自定义生成数量" /></div>
+        </section>
       </div>
     )
   }
 
   return (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
-      <label
+      {!advancedOnly && modelSupportsField(capability, 'size') && <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={sizeHint.show}
         onMouseLeave={sizeHint.hide}
@@ -150,8 +173,8 @@ export default function InputParamsPanel({
             ? <>fal.ai 的文生图模式不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 参数</>
             : 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
         />
-      </label>
-      <label
+      </label>}
+      {!advancedOnly && modelSupportsField(capability, 'quality') && <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={qualityHint.show}
         onMouseLeave={qualityHint.hide}
@@ -177,15 +200,16 @@ export default function InputParamsPanel({
           visible={(activeProfile.codexCli || isFalProvider) && qualityHint.visible}
           text={isFalProvider ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</> : 'Codex CLI 不支持质量参数'}
         />
-      </label>
-      <label className="flex flex-col gap-0.5">
+      </label>}
+      {showAdvanced && modelSupportsField(capability, 'output_format') && <label className="flex flex-col gap-0.5">
         <span className="text-gray-400 dark:text-gray-500 ml-1">格式</span>
         <Select
           value={params.output_format}
           onChange={(val) => {
             setParams({
               output_format: val as TaskParams['output_format'],
-              ...(val === 'png' ? { output_compression: null } : { transparent_output: false }),
+              transparent_output: false,
+              ...(val === 'png' ? { output_compression: null } : {}),
             })
           }}
           options={[
@@ -196,38 +220,8 @@ export default function InputParamsPanel({
           showValueTooltips={false}
           className={selectClass}
         />
-      </label>
-      {showTransparentOutputControl ? (
-        <label
-          className="relative flex flex-col gap-0.5"
-          onMouseEnter={transparentOutputHint.show}
-          onMouseLeave={transparentOutputHint.hide}
-          onTouchStart={transparentOutputHint.startTouch}
-          onTouchEnd={transparentOutputHint.clearTimer}
-          onTouchCancel={transparentOutputHint.hide}
-          onClick={transparentOutputHint.show}
-        >
-          <span className="text-gray-400 dark:text-gray-500 ml-1">透明背景</span>
-          <Select
-            value={transparentOutputEnabled ? 'on' : 'off'}
-            onChange={(val) => {
-              if (!transparentOutputAvailable) return
-              setParams({ transparent_output: val === 'on', output_compression: null })
-            }}
-            options={[
-              { label: 'false', value: 'off' },
-              { label: 'true', value: 'on' },
-            ]}
-            showValueTooltips={false}
-            className={selectClass}
-            onOpenChange={onTransparentOutputMenuOpenChange}
-          />
-          <ButtonTooltip
-            visible={transparentOutputHint.visible}
-            text="基于提示词与后处理，并非模型原生生成"
-          />
-        </label>
-      ) : (
+      </label>}
+      {showAdvanced && modelSupportsField(capability, 'output_compression') ? (
         <label
           className="relative flex flex-col gap-0.5"
           onMouseEnter={compressionHint.show}
@@ -258,8 +252,18 @@ export default function InputParamsPanel({
             text={isFalProvider ? 'fal.ai 不支持压缩率参数' : '仅 JPEG 和 WebP 支持压缩率'}
           />
         </label>
-      )}
-      <label
+      ) : null}
+      {showAdvanced && modelSupportsField(capability, 'background') && <label className="flex flex-col gap-0.5">
+        <span className="ml-1 text-gray-400 dark:text-gray-500">背景</span>
+        <Select
+          value={params.background}
+          onChange={(value) => setParams({ background: value as TaskParams['background'] })}
+          options={[{ label: '自动', value: 'auto' }, { label: '不透明', value: 'opaque' }]}
+          showValueTooltips={false}
+          className={selectClass}
+        />
+      </label>}
+      {showAdvanced && modelSupportsField(capability, 'moderation') && <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={moderationHint.show}
         onMouseLeave={moderationHint.hide}
@@ -288,8 +292,8 @@ export default function InputParamsPanel({
           visible={moderationDisabled && moderationHint.visible}
           text="fal.ai 不支持审核参数"
         />
-      </label>
-      <label
+      </label>}
+      {!advancedOnly && modelSupportsField(capability, 'n') && <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}
         onMouseLeave={() => { hideNLimitHint(); streamConcurrentHint.hide() }}
@@ -333,7 +337,7 @@ export default function InputParamsPanel({
         />
         <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
         <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
-      </label>
+      </label>}
     </div>
   )
 }

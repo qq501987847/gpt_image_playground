@@ -37,6 +37,7 @@ export interface ObjectStore {
   createUploadUrl: (file: AssetFile, validSeconds: number) => Promise<string>
   createDownloadUrl: (file: AssetFile, validSeconds: number) => Promise<string>
   stat: (objectKey: string) => Promise<{ bytes: number; mediaType: string } | null>
+  finalize: (file: AssetFile, objectKey: string) => Promise<AssetFile>
   remove: (objectKeys: string[]) => Promise<void>
 }
 

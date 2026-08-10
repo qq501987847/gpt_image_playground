@@ -178,4 +178,9 @@ describe('agent conversation state', () => {
 
     expect(getConversationSearchText(value)).toBe('project alpha\nmessage body\nround prompt')
   })
+
+  it('defaults legacy conversations to read state', () => {
+    const [normalized] = normalizeAgentConversations([conversation([], null)])
+    expect(normalized.unread).toBe(false)
+  })
 })

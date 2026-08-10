@@ -5,6 +5,8 @@ import {
   type AppSettings,
 } from '../../types'
 import { normalizeAgentMaxToolRounds } from '../../lib/apiProfiles'
+import { isDesktopRuntime } from '../../lib/runtime'
+import { useSub2ApiSession } from '../../lib/sub2apiSession'
 import Select from '../Select'
 
 interface SelectOption {
@@ -23,6 +25,7 @@ interface AgentSettingsTabProps {
   updateAgentApiConfigMode: (mode: AgentApiConfigMode) => void
   commitSettings: (nextDraft: AppSettings) => void
   commitAgentMaxToolRounds: () => void
+  onOpenAgentSetup: () => void
 }
 
 export default function AgentSettingsTab({
@@ -36,9 +39,17 @@ export default function AgentSettingsTab({
   updateAgentApiConfigMode,
   commitSettings,
   commitAgentMaxToolRounds,
+  onOpenAgentSetup,
 }: AgentSettingsTabProps) {
+  const session = useSub2ApiSession()
+  const textKey = session.keys.find((key) => key.id === selectedAgentTextProfile?.keyId)
+  const imageKey = session.keys.find((key) => key.id === selectedAgentImageProfile?.keyId)
+  const textGroup = textKey?.group || textKey?.name || '未配置'
+  const imageGroup = imageKey?.group || imageKey?.name || '未配置'
+
   return (
     <div className="space-y-4">
+      {isDesktopRuntime ? <>
       <div className="block">
         <div className="mb-1 flex items-center justify-between gap-3">
           <span className="block text-sm text-gray-600 dark:text-gray-300">使用独立的 API 配置</span>
@@ -108,7 +119,25 @@ export default function AgentSettingsTab({
           )}
         </>
       )}
-      <label className="block">
+      </> : (
+        <div className="block">
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <span className="block text-sm text-gray-600 dark:text-gray-300">文本与生图模型</span>
+            <button
+              type="button"
+              onClick={onOpenAgentSetup}
+              className="flex h-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 px-3 text-xs font-medium text-blue-600 transition-[transform,background-color] hover:bg-blue-100 active:scale-[0.96] dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20"
+            >
+              调整
+            </button>
+          </div>
+          <div data-selectable-text className="space-y-1 text-xs text-gray-500 dark:text-gray-500">
+            <div className="truncate" title={`${textGroup} · ${selectedAgentTextProfile?.model || '未配置'}`}>文本：{textGroup} · {selectedAgentTextProfile?.model || '未配置'}</div>
+            <div className="truncate" title={`${imageGroup} · ${selectedAgentImageProfile?.model || '未配置'}`}>生图：{imageGroup} · {selectedAgentImageProfile?.model || '未配置'}</div>
+          </div>
+        </div>
+      )}
+      {isDesktopRuntime && <label className="block">
         <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">最大工具调用轮数</span>
         <input
           value={agentMaxToolRoundsInput}
@@ -122,7 +151,7 @@ export default function AgentSettingsTab({
         <div data-selectable-text className="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-500">
           默认 15。用于限制 Agent 连续调用工具时的最大轮数，防止无限循环。
         </div>
-      </label>
+      </label>}
       <div className="block">
         <div className="mb-1 flex items-center justify-between gap-3">
           <span className="block text-sm text-gray-600 dark:text-gray-300">网络搜索</span>
@@ -147,6 +176,26 @@ export default function AgentSettingsTab({
           启用 Responses API 的 <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] dark:bg-white/[0.06]">web_search</code> 工具。模型每次调用此工具会产生少量固定价格的额外计费。
         </div>
       </div>
+      {!isDesktopRuntime && (
+        <div className="block">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="block text-sm text-gray-600 dark:text-gray-300">允许模型改写优化提示词</span>
+              <button
+                type="button"
+                onClick={() => commitSettings({ ...draft, allowPromptRewrite: !draft.allowPromptRewrite })}
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.allowPromptRewrite ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                role="switch"
+                aria-checked={draft.allowPromptRewrite}
+                aria-label="允许模型改写优化提示词"
+              >
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.allowPromptRewrite ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+              </button>
+            </div>
+            <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+              开启后，图像请求不再附加防改写提示词，允许模型按服务商策略优化提示词。
+            </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -30,6 +30,15 @@ function validateFile(file: FileDeclaration, kind: 'original' | 'thumbnail') {
   if (kind === 'original' && file.bytes > MAX_ORIGINAL_BYTES) throw new AssetError('original_too_large', '原图超过 30 MB 上限', 413)
 }
 
+function getRecordObjectKeys(record: AssetRecord) {
+  const keys = [record.original.objectKey, ...(record.thumbnail ? [record.thumbnail.objectKey] : [])]
+  if (record.status === 'available') {
+    keys.push(`temporary/${record.id}/upload/original`)
+    if (record.thumbnail) keys.push(`temporary/${record.id}/upload/thumbnail`)
+  }
+  return keys
+}
+
 export class AssetService {
   constructor(
     private repository: AssetRepository,
@@ -53,8 +62,8 @@ export class AssetService {
       id,
       ...identity,
       taskId: input.taskId,
-      original: { kind: 'original', objectKey: `${prefix}/original`, ...input.original },
-      thumbnail: input.thumbnail ? { kind: 'thumbnail', objectKey: `${prefix}/thumbnail`, ...input.thumbnail } : undefined,
+      original: { kind: 'original', objectKey: `${prefix}/upload/original`, ...input.original },
+      thumbnail: input.thumbnail ? { kind: 'thumbnail', objectKey: `${prefix}/upload/thumbnail`, ...input.thumbnail } : undefined,
       status: 'initialized',
       createdAt,
       updatedAt: createdAt,
@@ -88,7 +97,23 @@ export class AssetService {
       const usedBytes = await this.repository.getConfirmedBytes(identity.sourceOrigin, identity.userId, this.now())
       const incomingBytes = actualFiles.reduce((total, file) => total + file.bytes, 0)
       if (usedBytes + incomingBytes > MAX_USER_BYTES) throw new AssetError('quota_exceeded', '云端临时空间已达到 1 GB 上限', 409)
-      return this.repository.markAvailable(id, actualFiles, this.now())
+      const finalizedFiles: AssetFile[] = []
+      try {
+        for (const file of actualFiles) {
+          finalizedFiles.push(await this.objects.finalize(file, `temporary/${id}/available/${file.kind}`))
+        }
+      } catch (error) {
+        await this.objects.remove(finalizedFiles.map((file) => file.objectKey)).catch(() => undefined)
+        throw error
+      }
+      try {
+        const available = await this.repository.markAvailable(id, finalizedFiles, this.now())
+        await this.objects.remove(actualFiles.map((file) => file.objectKey)).catch((error) => console.warn('upload staging cleanup failed', error))
+        return available
+      } catch (error) {
+        await this.objects.remove(finalizedFiles.map((file) => file.objectKey)).catch(() => undefined)
+        throw error
+      }
     })
   }
 
@@ -105,7 +130,7 @@ export class AssetService {
 
   async delete(identity: AssetIdentity, id: string) {
     const record = await this.requireOwned(identity, id)
-    await this.objects.remove([record.original.objectKey, ...(record.thumbnail ? [record.thumbnail.objectKey] : [])])
+    await this.objects.remove(getRecordObjectKeys(record))
     await this.repository.remove(record.id)
   }
 
@@ -113,7 +138,7 @@ export class AssetService {
     const now = this.now()
     const records = await this.repository.listForCleanup(now, new Date(now.getTime() - UPLOAD_URL_SECONDS * 1000))
     for (const record of records) {
-      await this.objects.remove([record.original.objectKey, ...(record.thumbnail ? [record.thumbnail.objectKey] : [])])
+      await this.objects.remove(getRecordObjectKeys(record))
       await this.repository.remove(record.id)
     }
     return records.length

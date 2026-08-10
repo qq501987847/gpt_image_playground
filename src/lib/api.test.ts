@@ -128,6 +128,45 @@ describe('callImageApi', () => {
     expect(body.prompt).toBe('prompt')
   })
 
+  it('requests Base64 output for Sub2API-bound Images API profiles to avoid CORS download failures', async () => {
+    const profile = {
+      ...DEFAULT_SETTINGS.profiles[0],
+      apiKey: 'test-key',
+      keyId: 'sub2-key',
+      responseFormatB64Json: undefined,
+    }
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.startsWith('data:')) return originalFetch(input, init)
+      if (url.includes('/images/edits')) {
+        const body = (init as RequestInit).body as FormData
+        return new Response(JSON.stringify(body.get('response_format') === 'b64_json'
+          ? { data: [{ b64_json: 'aW1hZ2U=' }] }
+          : { data: [{ url: 'https://images.example.com/generated.png' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (init?.mode === 'no-cors') return { type: 'opaque' } as Response
+      throw new TypeError('Failed to fetch')
+    })
+
+    await expect(callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        profiles: [profile],
+        activeProfileId: profile.id,
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: ['data:image/png;base64,aW1hZ2U='],
+    })).resolves.toMatchObject({ images: ['data:image/png;base64,aW1hZ2U='] })
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/images/edits'))).toHaveLength(1)
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('https://images.example.com/'))).toBe(false)
+  })
+
   it('does not append a size hint to Agent tool requests', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: [{ b64_json: 'aW1hZ2U=' }],

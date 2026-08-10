@@ -4903,7 +4903,7 @@ describe('reused task API profile', () => {
     expect(resolved).toBeNull()
   })
 
-  it('reuses the task API profile temporarily without switching the active profile', async () => {
+  it('does not reuse the task API profile temporarily online', async () => {
     await reuseConfig(task({
       apiProvider: 'fal',
       apiProfileId: falProfile.id,
@@ -4912,9 +4912,9 @@ describe('reused task API profile', () => {
 
     const state = useStore.getState()
     expect(state.settings.activeProfileId).toBe(openaiProfile.id)
-    expect(state.reusedTaskApiProfileId).toBe(falProfile.id)
-    expect(state.params).toMatchObject({ n: 4, size: '1360x1024', quality: 'high' })
-    expect(state.showToast).toHaveBeenCalledWith('已临时复用该任务的 API 配置「fal 配置」', 'success')
+    expect(state.reusedTaskApiProfileId).toBeNull()
+    expect(state.params).toMatchObject({ n: 8, size: 'auto', quality: 'auto' })
+    expect(state.showToast).toHaveBeenCalledWith('已复用配置到输入框', 'success')
   })
 
   it('keeps selected image mentions when reusing a task with different current input images', async () => {
@@ -4974,17 +4974,13 @@ describe('reused task API profile', () => {
     expect(state.params).toMatchObject({ n: 8, size: 'auto', quality: 'auto' })
   })
 
-  it('asks whether to submit with current API profile when the reused API profile is missing', async () => {
+  it('ignores a missing reused API profile online', async () => {
     await reuseConfig(task({ apiProvider: 'fal', apiProfileId: 'missing-profile' }))
 
     const state = useStore.getState()
     expect(state.tasks).toEqual([])
-    expect(state.setConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
-      title: '找不到 API 配置',
-      message: '找不到复用任务所使用的 API 配置「未知配置」，要使用当前的 API 配置「默认」提交任务吗？',
-      confirmText: '使用当前配置提交',
-      cancelText: '放弃提交',
-    }))
+    expect(state.setConfirmDialog).not.toHaveBeenCalled()
+    expect(state.showToast).toHaveBeenCalledWith('已复用配置到输入框', 'success')
     expect(state.showSettings).toBe(false)
   })
 })

@@ -86,10 +86,11 @@ export class PostgresAssetRepository implements AssetRepository {
     const original = files.find((file) => file.kind === 'original')!
     const thumbnail = files.find((file) => file.kind === 'thumbnail')
     const result = await this.pool.query<AssetRow>(
-      `UPDATE temporary_assets SET status = 'available', original_bytes = $2, original_media_type = $3,
-       thumbnail_bytes = $4, thumbnail_media_type = $5, confirmed_at = $6, updated_at = $6
+      `UPDATE temporary_assets SET status = 'available', original_key = $2, original_bytes = $3, original_media_type = $4,
+       thumbnail_key = $5, thumbnail_bytes = $6, thumbnail_media_type = $7, confirmed_at = $8, updated_at = $8
        WHERE id = $1 RETURNING ${COLUMNS}`,
-      [id, original.bytes, original.mediaType, thumbnail?.bytes ?? null, thumbnail?.mediaType ?? null, confirmedAt],
+      [id, original.objectKey, original.bytes, original.mediaType, thumbnail?.objectKey ?? null,
+        thumbnail?.bytes ?? null, thumbnail?.mediaType ?? null, confirmedAt],
     )
     if (!result.rows[0]) throw new Error('云端记录不存在')
     return fromRow(result.rows[0])

@@ -3,6 +3,7 @@ import type { ApiProfile } from '../../types'
 import { addDesktopCredential, bindSub2ApiProfile, discoverProfileModels, useSub2ApiSession } from '../../lib/sub2apiSession'
 import { isSub2ApiKeyUsable } from '../../lib/sub2api'
 import { isDesktopRuntime } from '../../lib/runtime'
+import { filterDiscoveredModels } from '../../lib/modelCapabilities'
 
 export default function Sub2ApiProfileFields({ profile, onChange }: { profile: ApiProfile, onChange: (profile: ApiProfile) => void }) {
   const session = useSub2ApiSession()
@@ -15,7 +16,7 @@ export default function Sub2ApiProfileFields({ profile, onChange }: { profile: A
   useEffect(() => {
     setModels([])
     setError(null)
-  }, [profile.id, profile.keyId, profile.provider])
+  }, [profile.id, profile.keyId, profile.provider, profile.apiMode])
 
   if (session.status !== 'ready') return null
 
@@ -88,7 +89,7 @@ export default function Sub2ApiProfileFields({ profile, onChange }: { profile: A
               setLoading(true)
               setError(null)
               void discoverProfileModels(profile)
-                .then(setModels)
+                .then((items) => setModels(filterDiscoveredModels(profile.provider, items, profile.apiMode === 'responses' ? 'responses' : 'image')))
                 .catch((err) => setError(err instanceof Error ? err.message : String(err)))
                 .finally(() => setLoading(false))
             }}

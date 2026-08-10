@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import type { AssetFile, ObjectStore } from './types.js'
@@ -28,6 +28,12 @@ export class S3ObjectStore implements ObjectStore {
       if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) return null
       throw error
     }
+  }
+
+  async finalize(file: AssetFile, objectKey: string) {
+    const source = `${this.bucket}/${file.objectKey.split('/').map(encodeURIComponent).join('/')}`
+    await this.client.send(new CopyObjectCommand({ Bucket: this.bucket, CopySource: source, Key: objectKey }))
+    return { ...file, objectKey }
   }
 
   async remove(objectKeys: string[]) {

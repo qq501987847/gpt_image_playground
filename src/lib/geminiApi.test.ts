@@ -37,4 +37,19 @@ describe('Gemini native image API', () => {
     await expect(callGeminiImageApi({ settings: DEFAULT_SETTINGS, prompt: 'draw', params: DEFAULT_PARAMS, inputImageDataUrls: [] }, profile)).rejects.toThrow('quota')
     expect(fetchMock.mock.calls[0][0]).toBe('https://sub2api.example/v1beta/models/gemini-3-pro-image-preview:generateContent')
   })
+
+  it('uses app-level output count to issue concurrent single-image requests', async () => {
+    let requestCount = 0
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      requestCount++
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty('n')
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: `image-${requestCount}` } }] } }] }))
+    })
+    const profile = createDefaultGeminiProfile({ baseUrl: 'https://sub2api.example/', apiKey: 'key', model: 'gemini-3-pro-image-preview' })
+
+    await expect(callGeminiImageApi({ settings: DEFAULT_SETTINGS, prompt: 'draw', params: { ...DEFAULT_PARAMS, n: 3 }, inputImageDataUrls: [] }, profile)).resolves.toMatchObject({
+      images: ['data:image/png;base64,image-1', 'data:image/png;base64,image-2', 'data:image/png;base64,image-3'],
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })

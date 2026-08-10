@@ -332,4 +332,14 @@ describe('persisted state codec', () => {
     expect(merged.map((item) => item.id)).toEqual(['first', 'same'])
     expect(merged[1].title).toBe('legacy')
   })
+
+  it('migrates global parameters to the active model and defaults background', () => {
+    const result = normalizePersistedState({
+      settings: DEFAULT_SETTINGS,
+      params: { ...DEFAULT_PARAMS, size: '1536x1024', quality: 'high' },
+    }, fallback(), 100)!
+
+    expect(result.state.params.background).toBe('auto')
+    expect(result.state.paramsByModel?.['openai:gpt-image-2']).toMatchObject({ size: '1536x1024', quality: 'high', background: 'auto' })
+  })
 })

@@ -1,0 +1,18 @@
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: awai-web:local
+    container_name: awai-web
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${AWAI_WEB_PORT:-3003}:80'
+    environment:
+      DEFAULT_API_URL: ${DEFAULT_API_URL:-}
+      ENABLE_API_PROXY: ${ENABLE_API_PROXY:-false}
+      LOCK_API_PROXY: ${LOCK_API_PROXY:-false}
+      SHOW_DEFAULT_CONFIG_ONLY: ${SHOW_DEFAULT_CONFIG_ONLY:-false}
+      AWAI_SUB2API_ALLOWED_ORIGINS: ${AWAI_SUB2API_ALLOWED_ORIGINS:?AWAI_SUB2API_ALLOWED_ORIGINS is required}
+      AWAI_SUPPORT_URL: ${AWAI_SUPPORT_URL:-}
+      AWAI_ASSET_SERVICE_URL: ${AWAI_ASSET_SERVICE_URL:-}
