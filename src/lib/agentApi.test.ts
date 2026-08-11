@@ -46,7 +46,7 @@ describe('callAgentResponsesApi', () => {
       '',
       'data: {"type":"response.output_text.delta","delta":"lo"}',
       '',
-      'data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]},{"type":"image_generation_call","id":"ig_1","result":"ZmluYWw=","size":"1024x1024"}]}}',
+      'data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]},{"type":"image_generation_call","id":"ig_1","result":"ZmluYWw=","size":"1024x1024"}],"usage":{"input_tokens":1200,"output_tokens":80,"total_tokens":1280,"input_tokens_details":{"cached_tokens":900}}}}',
       '',
       'data: [DONE]',
       '',
@@ -82,7 +82,107 @@ describe('callAgentResponsesApi', () => {
       responseId: 'resp_1',
       text: 'Hello',
       images: [{ toolCallId: 'ig_1', dataUrl: 'data:image/png;base64,ZmluYWw=' }],
+      usage: {
+        apiCalls: 1,
+        inputTokens: 1200,
+        outputTokens: 80,
+        totalTokens: 1280,
+        cachedInputTokens: 900,
+        cacheMissInputTokens: 300,
+        cacheWriteInputTokens: 0,
+      },
     })
+  })
+
+  it('normalizes cache usage from an OpenAI-compatible response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'usage-response',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+      usage: {
+        prompt_tokens: 500,
+        completion_tokens: 25,
+        total_tokens: 525,
+        prompt_tokens_details: { cached_tokens: 200, cache_write_tokens: 50 },
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', apiMode: 'responses' })
+
+    const result = await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: 'prompt',
+    })
+
+    expect(result.usage).toEqual({
+      apiCalls: 1,
+      inputTokens: 500,
+      outputTokens: 25,
+      totalTokens: 525,
+      cachedInputTokens: 200,
+      cacheMissInputTokens: 250,
+      cacheWriteInputTokens: 50,
+    })
+  })
+
+  it('keeps completed output when stream usage arrives in a separate event', async () => {
+    const streamBody = [
+      'data: {"type":"response.completed","response":{"id":"resp_separate_usage","output":[{"type":"message","content":[{"type":"output_text","text":"done"}]}]}}',
+      '',
+      'data: {"type":"response.usage","usage":{"input_tokens":300,"output_tokens":20,"total_tokens":320,"input_tokens_details":{"cached_tokens":0}}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(streamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+    const profile = createDefaultOpenAIProfile({
+      apiKey: 'test-key',
+      apiMode: 'responses',
+      streamImages: true,
+    })
+
+    const result = await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: 'prompt',
+    })
+
+    expect(result).toMatchObject({
+      responseId: 'resp_separate_usage',
+      text: 'done',
+      usage: {
+        apiCalls: 1,
+        inputTokens: 300,
+        outputTokens: 20,
+        totalTokens: 320,
+        cachedInputTokens: 0,
+        cacheMissInputTokens: 300,
+        cacheWriteInputTokens: 0,
+      },
+    })
+  })
+
+  it('sends a stable prompt cache key for the Agent conversation', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'cached-response',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', apiMode: 'responses' })
+
+    await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'continue' }] }],
+      promptCacheKey: 'awai-agent:conversation-a',
+    })
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body.prompt_cache_key).toBe('awai-agent:conversation-a')
   })
 
   it('omits every image tool for continuation-only replies', async () => {

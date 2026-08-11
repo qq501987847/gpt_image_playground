@@ -153,6 +153,23 @@ describe('agent conversation state', () => {
     })
   })
 
+  it('preserves valid token usage across reloads', () => {
+    const value = conversation([{
+      ...round('round-a', null, 1),
+      usage: {
+        apiCalls: 2,
+        inputTokens: 1200,
+        outputTokens: 80,
+        totalTokens: 1280,
+        cachedInputTokens: 900,
+        cacheMissInputTokens: 300,
+        cacheWriteInputTokens: 0,
+      },
+    }], 'round-a')
+
+    expect(normalizeAgentConversations([value])[0].rounds[0].usage).toEqual(value.rounds[0].usage)
+  })
+
   it('keeps the first entity when persisted IDs are duplicated', () => {
     const normalized = normalizeAgentConversations([{
       id: 'conversation-a',
@@ -231,6 +248,50 @@ describe('agent conversation state', () => {
 
     const missing = normalizeAgentConversations([{ ...valid, rounds: [], messages: [] }])[0]
     expect(missing.skillPlan).toBeNull()
+  })
+
+  it('recovers a lost review plan from the persisted proposal tool call', () => {
+    const proposal = {
+      title: '000 耳机主图方案',
+      style_lock: '白底棚拍，统一产品外观与简洁中文排版',
+      groups: [{
+        kind: 'hero',
+        title: '主图',
+        images: Array.from({ length: 5 }, (_, idx) => ({
+          id: `H${idx + 1}`,
+          title: `主图 ${idx + 1}`,
+          prompt: `生成耳机主图 ${idx + 1}`,
+          aspect_ratio: '1:1',
+          resolution: '2K',
+        })),
+      }],
+    }
+    const proposalRound = {
+      ...round('round-a', null, 1),
+      responseOutput: [{
+        type: 'function_call',
+        call_id: 'plan-call-a',
+        name: 'propose_image_plan',
+        arguments: JSON.stringify(proposal),
+      }, {
+        type: 'function_call_output',
+        call_id: 'plan-call-a',
+        output: JSON.stringify({ status: 'awaiting_user_confirmation' }),
+      }],
+    }
+    const normalized = normalizeAgentConversations([{
+      ...conversation([proposalRound, round('round-b', 'round-a', 2)], 'round-b'),
+      skillId: 'ecom-details-image',
+      skillMode: 'hero',
+      skillPlan: null,
+    }])[0]
+
+    expect(normalized.skillPlan).toMatchObject({
+      title: '000 耳机主图方案',
+      sourceRoundId: 'round-a',
+      status: 'review',
+      groups: [{ kind: 'hero', images: [{ id: 'H1' }, { id: 'H2' }, { id: 'H3' }, { id: 'H4' }, { id: 'H5' }] }],
+    })
   })
 
   it('clears a skill plan when deleting one of its source ancestors', () => {

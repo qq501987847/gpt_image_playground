@@ -13,8 +13,13 @@ export default function AgentSkillSelector({ open, onOpenChange }: AgentSkillSel
   const activeConversationId = useStore((s) => s.activeAgentConversationId)
   const setConversationSkill = useStore((s) => s.setAgentConversationSkill)
   const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
-  const selected = getAgentSkillChoice(conversation?.skillId, conversation?.skillMode)
+  const selected = conversation?.skillId ? getAgentSkillChoice(conversation.skillId, conversation.skillMode) : null
   const running = conversation?.rounds.some((round) => round.status === 'running') ?? false
+  const buttonTone = open
+    ? 'border-blue-300 bg-blue-50/80 text-blue-700 dark:border-blue-400/30 dark:bg-blue-500/10 dark:text-blue-300'
+    : selected
+    ? 'border-amber-300/80 bg-amber-100/80 text-amber-800 dark:border-amber-300/20 dark:bg-amber-400/15 dark:text-amber-200'
+    : 'border-gray-200/60 bg-white/50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300'
 
   useEffect(() => {
     if (!open) return
@@ -31,13 +36,13 @@ export default function AgentSkillSelector({ open, onOpenChange }: AgentSkillSel
         type="button"
         disabled={!conversation || running}
         onClick={() => onOpenChange(!open)}
-        className={`flex h-10 max-w-28 items-center gap-1 rounded-xl border px-2.5 text-xs outline-none transition-[transform,background-color,border-color,color] focus-visible:ring-2 focus-visible:ring-blue-400/50 active:not-disabled:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 ${open ? 'border-blue-300 bg-blue-50/80 text-blue-700 dark:border-blue-400/30 dark:bg-blue-500/10 dark:text-blue-300' : 'border-gray-200/60 bg-white/50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300'}`}
+        className={`flex h-10 max-w-32 items-center gap-1 rounded-xl border px-2.5 text-xs outline-none transition-[transform,background-color,border-color,color] focus-visible:ring-2 focus-visible:ring-blue-400/50 active:not-disabled:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 ${buttonTone}`}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label={`Agent 技能：${selected.label}`}
-        title={running ? '生成期间不能切换技能' : selected.label}
+        aria-label={selected ? `切换技能，当前为${selected.label}` : '选择技能'}
+        title={running ? '生成期间不能切换技能' : selected?.label ?? '选择技能'}
       >
-        <span className="truncate">{selected.shortLabel}</span>
+        <span className="truncate">{selected ? `技能：${selected.shortLabel}` : '技能'}</span>
         <ChevronDownIcon className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -45,7 +50,7 @@ export default function AgentSkillSelector({ open, onOpenChange }: AgentSkillSel
         <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="关闭技能菜单" onClick={() => onOpenChange(false)} />
         <div className="absolute bottom-full -left-[3.25rem] z-50 mb-2 w-[calc(100vw-2rem)] max-w-xs overflow-hidden rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl dark:border-white/[0.08] dark:bg-gray-900 sm:left-0" role="menu">
           {AGENT_SKILL_CHOICES.map((choice) => {
-            const active = choice.skillId === selected.skillId && choice.mode === selected.mode
+            const active = selected != null && choice.skillId === selected.skillId && choice.mode === selected.mode
             return (
               <button
                 key={`${choice.skillId ?? 'general'}:${choice.mode ?? 'general'}`}

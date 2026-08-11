@@ -5,6 +5,7 @@ import type {
   AgentInputDraft,
   AgentMessage,
   AgentRound,
+  AgentUsage,
   AgentImagePlanGroupKind,
   AgentImagePlanItem,
   AgentSkillId,
@@ -51,7 +52,8 @@ import {
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
-import { AGENT_SKILL_PLAN_FUNCTION_NAME, getAgentSkillBaseItemId, getAgentSkillPlanStageError, getAgentSkillSession, parseAgentSkillPlanCall, selectAgentSkillPlanGroups } from './lib/agentSkills'
+import { mergeAgentUsage } from './lib/agentUsage'
+import { AGENT_SKILL_PLAN_FUNCTION_NAME, getAgentSkillBaseItemId, getAgentSkillPlanStageError, getAgentSkillSession, parseAgentSkillPlanCall, selectAgentSkillPlanGroups, setAgentSkillPlanDecision } from './lib/agentSkills'
 import { buildAgentApiInput, buildAgentContinuationInput } from './lib/agentInputBuilder'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
@@ -2350,7 +2352,9 @@ export async function submitAgentMessage() {
     return {
       ...current,
       title: nextTitle,
-      ...(current.skillId ? { skillPlan: null } : {}),
+      ...(current.skillPlan && !parentPath.some((item) => item.id === current.skillPlan?.sourceRoundId)
+        ? { skillPlan: null }
+        : {}),
       activeRoundId: roundId,
       updatedAt: now,
       rounds: shouldAppendToEditingRound
@@ -2449,7 +2453,12 @@ export async function approveAgentSkillPlan(
     skillPlan: approvedPlan,
     activeRoundId: roundId,
     updatedAt: now,
-    rounds: [...current.rounds, round],
+    rounds: [
+      ...current.rounds.map((item) => item.id === sourceRoundId
+        ? { ...item, responseOutput: setAgentSkillPlanDecision(item.responseOutput, 'approved', selectedKinds) }
+        : item),
+      round,
+    ],
     messages: [...current.messages, userMessage],
   }))
   state.setAgentEditingRoundId(null)
@@ -2465,6 +2474,9 @@ export function dismissAgentSkillPlan(conversationId: string, sourceRoundId: str
     ...current,
     skillPlan: null,
     updatedAt: Date.now(),
+    rounds: current.rounds.map((item) => item.id === sourceRoundId
+      ? { ...item, responseOutput: setAgentSkillPlanDecision(item.responseOutput, 'dismissed') }
+      : item),
   }))
   state.showToast('已取消图片方案', 'info')
 }
@@ -2912,6 +2924,7 @@ async function executeAgentRound(
       ? Math.max(1, Math.trunc(requestSettings.agentMaxToolRounds))
       : DEFAULT_AGENT_MAX_TOOL_ROUNDS
     let accumulatedOutputItems: ResponsesOutputItem[] = resume?.responseOutput ?? []
+    let accumulatedUsage: AgentUsage | undefined = round.usage
     let accumulatedText = resumedAssistantContent
     const textSegments: string[] = resumedAssistantContent ? [resumedAssistantContent] : []
     let lastResponseId: string | undefined = round.responseId
@@ -3299,6 +3312,7 @@ async function executeAgentRound(
         signal: controller.signal,
         allowImageTools: !resume?.continuationOnly,
         agentSkill,
+        promptCacheKey: `awai-agent:${conversationId}`,
         onTextDelta: shouldStreamAssistantMessage
           ? (delta) => {
               if (controller.signal.aborted) return
@@ -3355,6 +3369,7 @@ async function executeAgentRound(
       })
       if (controller.signal.aborted) throw createAgentAbortError()
 
+      accumulatedUsage = mergeAgentUsage(accumulatedUsage, result.usage)
       lastResponseId = result.responseId ?? lastResponseId
       currentResponseOutputItems = canonicalizeBatchFunctionCallArguments(
         currentResponseOutputItems.length ? currentResponseOutputItems : result.outputItems ?? [],
@@ -3373,7 +3388,12 @@ async function executeAgentRound(
       updateAgentConversation(conversationId, (current) => ({
         ...current,
         updatedAt: Date.now(),
-        rounds: current.rounds.map((item) => item.id === roundId ? { ...item, responseId: lastResponseId, responseOutput: accumulatedOutputItems } : item),
+        rounds: current.rounds.map((item) => item.id === roundId ? {
+          ...item,
+          responseId: lastResponseId,
+          responseOutput: accumulatedOutputItems,
+          ...(accumulatedUsage ? { usage: accumulatedUsage } : {}),
+        } : item),
       }))
       await persistAgentConversationCheckpoint(conversationId)
 
@@ -3652,6 +3672,7 @@ async function executeAgentRound(
               outputTaskIds: taskIds,
               responseId: lastResponseId,
               responseOutput,
+              ...(accumulatedUsage ? { usage: accumulatedUsage } : {}),
               status: 'done',
               error: null,
               finishedAt: Date.now(),

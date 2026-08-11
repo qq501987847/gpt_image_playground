@@ -14,6 +14,7 @@ import { getGptImage2RequestSize, getModelCapability, modelSupportsField } from 
 import { getSub2ApiImageBillingTier } from '../lib/sub2api'
 import { isDesktopRuntime } from '../lib/runtime'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
+import { AGENT_SKILL_CHOICES, getAgentSkillChoice } from '../lib/agentSkills'
 import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds } from '../lib/favoriteState'
 import { getContentEditableCursor, getContentEditablePlainText, getContentEditableSelection, getMentionTagHtml, setContentEditableCursor, setContentEditableSelection, syncMentionTagSelection } from '../lib/contentEditableMentions'
 import { useHintTooltip } from '../hooks/useHintTooltip'
@@ -61,6 +62,23 @@ function agentImageMentionMatches(query: string, label: string) {
   if (!normalized) return true
   const normalizedLabel = label.toLowerCase()
   return normalizedLabel.includes(normalized) || normalizedLabel.replace(/^@/, '').includes(normalized)
+}
+
+function getSlashSkillQuery(prompt: string, cursor: number) {
+  const beforeCursor = prompt.slice(0, cursor)
+  const slashIndex = beforeCursor.lastIndexOf('/')
+  if (slashIndex < 0) return null
+  const previous = beforeCursor[slashIndex - 1]
+  if (previous && !/\s/.test(previous)) return null
+  const query = beforeCursor.slice(slashIndex + 1)
+  if (/\s/.test(query)) return null
+  return { start: slashIndex, query }
+}
+
+function skillMatches(query: string, label: string, shortLabel: string) {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return true
+  return label.toLowerCase().includes(normalized) || shortLabel.toLowerCase().includes(normalized)
 }
 
 function AtImageOptionThumb({ option }: { option: AtImageOption }) {
@@ -117,6 +135,7 @@ export default function InputBar() {
   const defaultFavoriteCollectionId = useStore((s) => s.defaultFavoriteCollectionId)
   const agentConversations = useStore((s) => s.agentConversations)
   const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
+  const setAgentConversationSkill = useStore((s) => s.setAgentConversationSkill)
   const filterStatus = useStore((s) => s.filterStatus)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
@@ -345,6 +364,8 @@ export default function InputBar() {
   const [imageDragOverIndex, setImageDragOverIndex] = useState<number | null>(null)
   const [atImageMenuIndex, setAtImageMenuIndex] = useState(0)
   const [atImageMenuDismissed, setAtImageMenuDismissed] = useState(false)
+  const [slashSkillMenuIndex, setSlashSkillMenuIndex] = useState(0)
+  const [slashSkillMenuDismissed, setSlashSkillMenuDismissed] = useState(false)
   const [touchDragPreview, setTouchDragPreview] = useState<{ src: string; x: number; y: number } | null>(null)
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
@@ -476,6 +497,9 @@ export default function InputBar() {
   const activeAgentConversation = appMode === 'agent'
     ? agentConversations.find((conversation) => conversation.id === activeAgentConversationId) ?? null
     : null
+  const activeAgentSkillChoice = activeAgentConversation?.skillId
+    ? getAgentSkillChoice(activeAgentConversation.skillId, activeAgentConversation.skillMode)
+    : null
   const activeAgentIsRunning = Boolean(activeAgentConversation?.rounds.some((round) => round.status === 'running'))
   const effectiveSettings = useMemo(() => (
     activeProfile.id === settingsActiveProfile.id
@@ -494,7 +518,9 @@ export default function InputBar() {
     : isDesktopRuntime
       ? '尚未完成 API 配置，请在右上角设置中进行'
       : '尚未完成模型配置，请在当前页面选择分组和模型'
-  const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
+  const promptPlaceholder = appMode === 'agent'
+    ? '描述你想生成的图片，可输入 @ 指定参考图，输入 / 或点击“技能”选择技能...'
+    : '描述你想生成的图片，可输入 @ 来指定参考图...'
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
@@ -566,6 +592,10 @@ export default function InputBar() {
     : inputImages
   const cursorPosition = cursorPos
   const visiblePrompt = stripImageMentionMarkers(prompt)
+  const slashSkillQuery = appMode === 'agent' ? getSlashSkillQuery(visiblePrompt, cursorPosition) : null
+  const slashSkillOptions = slashSkillQuery
+    ? AGENT_SKILL_CHOICES.filter((choice) => skillMatches(slashSkillQuery.query, choice.label, choice.shortLabel))
+    : []
   const agentOutputImageOptions = useMemo<AtImageOption[]>(() => {
     if (!activeAgentConversation) return []
     return getActiveAgentRounds(activeAgentConversation).flatMap((round) =>
@@ -601,7 +631,8 @@ export default function InputBar() {
         ...agentOutputImageOptions.filter((option) => agentImageMentionMatches(atImageQuery.query, option.label)),
       ]
     : []
-  const showAtImageMenu = !atImageMenuDismissed && atImageOptions.length > 0
+  const showAtImageMenu = !slashSkillQuery && !atImageMenuDismissed && atImageOptions.length > 0
+  const showSlashSkillMenu = !slashSkillMenuDismissed && slashSkillOptions.length > 0
 
 
 
@@ -639,6 +670,28 @@ export default function InputBar() {
       }
     }, 0)
   }, [atImageSourceCount, prompt, setPrompt, syncPromptFromContentEditable])
+
+  const selectSlashSkill = useCallback((choice: (typeof AGENT_SKILL_CHOICES)[number]) => {
+    const el = textareaRef.current
+    const cursor = el ? getContentEditableCursor(el) : prompt.length
+    const query = getSlashSkillQuery(stripImageMentionMarkers(prompt), cursor)
+    setSlashSkillMenuDismissed(true)
+    setSlashSkillMenuIndex(0)
+    if (!query || !activeAgentConversationId) return
+
+    const promptStart = getPromptIndexFromVisibleIndex(prompt, query.start)
+    const promptCursor = getPromptIndexFromVisibleIndex(prompt, cursor)
+    const nextPrompt = `${prompt.slice(0, promptStart)}${prompt.slice(promptCursor)}`
+    setAgentConversationSkill(activeAgentConversationId, choice.skillId, choice.mode)
+    isUserInputRef.current = false
+    setPrompt(nextPrompt)
+    window.setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus()
+        setContentEditableCursor(textareaRef.current, query.start)
+      }
+    }, 0)
+  }, [activeAgentConversationId, prompt, setAgentConversationSkill, setPrompt])
 
 
 
@@ -903,6 +956,30 @@ export default function InputBar() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (showSlashSkillMenu) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashSkillMenuIndex((idx) => (idx + 1) % slashSkillOptions.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashSkillMenuIndex((idx) => (idx - 1 + slashSkillOptions.length) % slashSkillOptions.length)
+        return
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault()
+        selectSlashSkill(slashSkillOptions[slashSkillMenuIndex] ?? slashSkillOptions[0])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSlashSkillMenuDismissed(true)
+        setSlashSkillMenuIndex(0)
+        return
+      }
+    }
+
     if (showAtImageMenu) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -1724,6 +1801,36 @@ export default function InputBar() {
                 </div>
               </div>
             )}
+            {showSlashSkillMenu && (
+              <div style={{ left: `${menuLeft}px` }} className="absolute bottom-full z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
+                <div className="px-2 pb-1 pt-0.5 text-[11px] text-gray-400 dark:text-gray-500">选择技能</div>
+                <div className="max-h-56 overflow-y-auto custom-scrollbar">
+                  {slashSkillOptions.map((choice, optionIndex) => {
+                    const active = activeAgentSkillChoice != null && choice.skillId === activeAgentSkillChoice.skillId && choice.mode === activeAgentSkillChoice.mode
+                    return (
+                      <button
+                        key={`${choice.skillId ?? 'general'}:${choice.mode ?? 'general'}`}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          selectSlashSkill(choice)
+                        }}
+                        onMouseEnter={() => setSlashSkillMenuIndex(optionIndex)}
+                        className={`flex min-h-10 w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-xs transition-colors ${
+                          optionIndex === slashSkillMenuIndex
+                            ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300'
+                            : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-blue-500' : 'bg-gray-200 dark:bg-white/[0.12]'}`} />
+                        <span className="min-w-0 flex-1 truncate font-medium">{choice.label}</span>
+                        {active && <span className="shrink-0 text-[10px] text-blue-500 dark:text-blue-300">当前</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             <div
               ref={textareaRef}
               contentEditable
@@ -1738,6 +1845,8 @@ export default function InputBar() {
                 setPrompt(text)
                 setAtImageMenuIndex(0)
                 setAtImageMenuDismissed(false)
+                setSlashSkillMenuIndex(0)
+                setSlashSkillMenuDismissed(false)
               }}
               onSelect={(e) => {
                 const el = e.currentTarget
@@ -1746,6 +1855,8 @@ export default function InputBar() {
                 syncMentionTagSelection(el)
                 setAtImageMenuIndex(0)
                 setAtImageMenuDismissed(false)
+                setSlashSkillMenuIndex(0)
+                setSlashSkillMenuDismissed(false)
               }}
               onKeyDown={handleKeyDown}
               onPaste={handlePromptPaste}
@@ -1936,16 +2047,6 @@ export default function InputBar() {
           <div className="absolute bottom-1 left-2 right-2 z-50 flex min-w-0 items-center gap-1.5">
             <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-200 text-gray-500 shadow-sm transition-transform active:scale-[0.96] dark:bg-white/[0.06] dark:text-gray-300" aria-label="上传图片"><PlusIcon className="h-5 w-5" /></button>
             {appMode === 'gallery' && <div className="min-w-0 shrink-0">{renderCompactModelSelector()}</div>}
-            {appMode === 'agent' && <AgentSkillSelector
-              open={showAgentSkillSelector}
-              onOpenChange={(open) => {
-                setShowAgentSkillSelector(open)
-                if (open) {
-                  setShowAgentModelSelector(false)
-                  setShowParamsPopover(false)
-                }
-              }}
-            />}
             {appMode === 'agent' && <AgentModelSelector
               open={showAgentModelSelector}
               onOpenChange={(open) => {
@@ -1975,6 +2076,16 @@ export default function InputBar() {
                 {renderParams('grid-cols-2 sm:grid-cols-3', { panel: true })}
               </section>}
             </div>
+            {appMode === 'agent' && <AgentSkillSelector
+              open={showAgentSkillSelector}
+              onOpenChange={(open) => {
+                setShowAgentSkillSelector(open)
+                if (open) {
+                  setShowAgentModelSelector(false)
+                  setShowParamsPopover(false)
+                }
+              }}
+            />}
             <button type="button" onClick={() => hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)} disabled={hasSubmitApiConfig && !canSubmit} className="ml-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500 text-white transition-transform active:scale-[0.96] disabled:bg-gray-300" aria-label={submitButtonAriaLabel}>→</button>
           </div>
 

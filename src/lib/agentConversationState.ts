@@ -1,5 +1,6 @@
 import type { AgentConversation, AgentMessage, AgentRound, TaskRecord } from '../types'
-import { normalizeAgentSkillConversation } from './agentSkills'
+import { normalizeAgentUsage } from './agentUsage'
+import { getAgentSkillSession, normalizeAgentSkillConversation, recoverAgentSkillPlan } from './agentSkills'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
 
 export const AGENT_ROUND_INTERRUPTED_ERROR = '上次请求已中断'
@@ -28,6 +29,7 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
     ? round.status
     : 'done'
   const responseOutput = Array.isArray(round.responseOutput) ? normalizeResponsesOutputItems(round.responseOutput) : undefined
+  const usage = normalizeAgentUsage(round.usage)
 
   return {
     id: round.id,
@@ -42,6 +44,7 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
     outputTaskIds: normalizeStringArray(round.outputTaskIds),
     ...(typeof round.responseId === 'string' ? { responseId: round.responseId } : {}),
     ...(responseOutput ? { responseOutput } : {}),
+    ...(usage ? { usage } : {}),
     status,
     error: status === 'error' || status === 'partial'
       ? typeof round.error === 'string' ? round.error : AGENT_ROUND_INTERRUPTED_ERROR
@@ -110,17 +113,23 @@ export function normalizeAgentConversations(value: unknown): AgentConversation[]
               return true
             })
         : []
-      return {
+      const activeRoundId = typeof conversation.activeRoundId === 'string' && roundIds.has(conversation.activeRoundId)
+        ? conversation.activeRoundId
+        : rounds[rounds.length - 1]?.id ?? null
+      const normalized: AgentConversation = {
         id: conversation.id,
         title: typeof conversation.title === 'string' && conversation.title.trim() ? conversation.title : '新对话',
         ...normalizeAgentSkillConversation(conversation, roundIds),
-        activeRoundId: typeof conversation.activeRoundId === 'string' && roundIds.has(conversation.activeRoundId) ? conversation.activeRoundId : rounds[rounds.length - 1]?.id ?? null,
+        activeRoundId,
         createdAt: typeof conversation.createdAt === 'number' ? conversation.createdAt : Date.now(),
         updatedAt: typeof conversation.updatedAt === 'number' ? conversation.updatedAt : Date.now(),
         unread: conversation.unread === true,
         rounds,
         messages,
       }
+      if (normalized.skillPlan) return normalized
+      const recoveredPlan = recoverAgentSkillPlan(getAgentSkillSession(normalized), getAgentRoundPath(normalized, activeRoundId))
+      return recoveredPlan ? { ...normalized, skillPlan: recoveredPlan } : normalized
     })
 }
 

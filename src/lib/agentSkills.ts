@@ -1,4 +1,4 @@
-import type { AgentConversation, AgentImagePlanGroup, AgentImagePlanGroupKind, AgentImagePlanItem, AgentSkillId, AgentSkillMode, AgentSkillPlan } from '../types'
+import type { AgentConversation, AgentImagePlanGroup, AgentImagePlanGroupKind, AgentImagePlanItem, AgentRound, AgentSkillId, AgentSkillMode, AgentSkillPlan, ResponsesOutputItem } from '../types'
 
 export interface AgentSkillChoice {
   skillId: AgentSkillId | null
@@ -19,12 +19,18 @@ type AgentSkillConversationState = Partial<Pick<AgentConversation, 'skillId' | '
 const PLAN_FUNCTION_NAME = 'propose_image_plan'
 const ASPECT_RATIOS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9', '9:21', '1:3', '3:1', '2:1', '1:2'])
 const RESOLUTIONS = new Set<AgentImagePlanItem['resolution']>(['1K', '2K', '4K'])
+const PRODUCT_CLAIM_INSTRUCTIONS = [
+  'Treat certifications, sales figures, reviews, test results, guarantees, and product specifications as factual claims. When relevant specifications are missing and the user has not authorized mock or placeholder copy, ask the user for verified specifications.',
+  'When the user explicitly authorizes simulated, mock, or invented product specifications, infer a category-appropriate provisional specification set and fill it with concrete, plausible mock values. Select only fields that make sense for that product category. Do not ask for the real values again, and do not use "XX" placeholders for a simulation request.',
+  'Prefix a plan containing simulated values with "模拟参数，发布前核实｜" and briefly remind the user that the values must be verified before publication.',
+  'Use "XX" or other placeholders only when the user explicitly requests placeholders instead of simulated values.',
+]
 
 export const AGENT_SKILL_CHOICES: AgentSkillChoice[] = [
   {
     skillId: null,
-    label: '通用创作',
-    shortLabel: '通用',
+    label: '不使用技能',
+    shortLabel: '未选择',
     description: '使用模型原生能力和现有生图工具。',
   },
   {
@@ -106,6 +112,20 @@ export function getAgentSkillSession(conversation: Pick<AgentConversation, 'skil
   return { skillId: conversation.skillId, mode, plan: conversation.skillPlan ?? null }
 }
 
+function getRequestPlanGroups(plan: AgentSkillPlan) {
+  return plan.groups.map((group) => ({
+    kind: group.kind,
+    title: group.title,
+    images: group.images.map((item) => ({
+      id: item.id,
+      title: item.title,
+      prompt: item.prompt,
+      aspect_ratio: item.aspectRatio,
+      resolution: item.resolution,
+    })),
+  }))
+}
+
 export function resolveAgentSkillRequest(session: AgentSkillSession | null) {
   if (!session) return null
   const modeInstruction = session.mode === 'hero'
@@ -115,17 +135,7 @@ export function resolveAgentSkillRequest(session: AgentSkillSession | null) {
     : 'The requested package is exactly 5 hero images plus 7 to 9 detail-page infographic images in separate groups.'
 
   if (session.plan?.status === 'approved') {
-    const groups = session.plan.groups.map((group) => ({
-      kind: group.kind,
-      title: group.title,
-      images: group.images.map((item) => ({
-        id: item.id,
-        title: item.title,
-        prompt: item.prompt,
-        aspect_ratio: item.aspectRatio,
-        resolution: item.resolution,
-      })),
-    }))
+    const groups = getRequestPlanGroups(session.plan)
     return {
       instructions: [
         '## Built-in skill: Ecommerce image package',
@@ -138,9 +148,30 @@ export function resolveAgentSkillRequest(session: AgentSkillSession | null) {
         'Stage 2: if more approved hero items exist, generate only those hero items with generate_image_batch, using the base reference. Call continue_generation only when approved detail items still remain.',
         'Stage 3: generate approved detail items with generate_image_batch, using the base reference. Stop when every approved item has one independent output.',
         'If the approved package has no hero group, use the first detail item as the base reference, then generate the remaining detail items in Stage 3.',
-        'Detail-page outputs must be ecommerce infographics with short readable labels, structured layout, generous whitespace, and no invented claims or certifications.',
+        'Detail-page outputs must be ecommerce infographics with short readable labels, structured layout, and generous whitespace.',
+        'Render approved placeholder or mock copy exactly as written. Do not add, remove, or alter product claims during generation.',
       ].join('\n'),
       tools: null,
+    }
+  }
+
+  if (session.plan?.status === 'review') {
+    return {
+      instructions: [
+        '## Built-in skill: Ecommerce image package',
+        modeInstruction,
+        'The app currently has the following complete image plan in review:',
+        JSON.stringify(getRequestPlanGroups(session.plan)),
+        `Current campaign style lock: ${session.plan.styleLock}`,
+        'The app\'s visible confirmation control is the only approval path that authorizes billable image generation.',
+        'User chat messages such as "确认", "可以", or "继续" do not approve it. Never claim that the plan is approved or that generation has started based on chat text.',
+        'If the user requests any change, call propose_image_plan exactly once with the complete revised plan, including every unchanged item. This replaces the plan shown for review.',
+        'If the requested change is to add placeholder or mock product specifications, replace the reviewed plan with a complete revised plan and follow the product-claim rules below.',
+        'If the user accepts the plan without changes, briefly direct them to the visible confirmation control. Do not call propose_image_plan again and do not say that image tools are unavailable.',
+        'If the user only asks for advice or copywriting, answer normally without changing the plan.',
+        ...PRODUCT_CLAIM_INSTRUCTIONS,
+      ].join('\n'),
+      tools: [createPlanTool(session.mode)],
     }
   }
 
@@ -156,7 +187,7 @@ export function resolveAgentSkillRequest(session: AgentSkillSession | null) {
       'Use 1:1 at 2K by default for hero images and 2:3 at 2K by default for detail-page images unless the user or target platform requires another supported format.',
       'A 5-image hero sequence must use at least 3 camera angles and include at least one close-up or macro view.',
       'A detail-page sequence must use ecommerce infographic layouts with headlines, labels, icons, comparisons, steps, or trust elements. It must not be a set of plain product-angle photos.',
-      'Do not invent certifications, sales figures, reviews, test results, guarantees, or product claims that the user did not provide.',
+      ...PRODUCT_CLAIM_INSTRUCTIONS,
     ].join('\n'),
     tools: [createPlanTool(session.mode)],
   }
@@ -240,6 +271,67 @@ export function parseAgentSkillPlanCall(session: AgentSkillSession | null, argum
   } catch {
     return { ok: false as const, error: '图片方案不是有效 JSON' }
   }
+}
+
+function getPlanDecision(output: ResponsesOutputItem[], callId: string) {
+  const item = output.find((candidate) => candidate.type === 'function_call_output' && candidate.call_id === callId)
+  if (typeof item?.output !== 'string') return null
+  try {
+    const value = JSON.parse(item.output) as unknown
+    if (!isRecord(value) || typeof value.status !== 'string') return null
+    const selectedGroups = Array.isArray(value.selected_groups)
+      ? value.selected_groups.filter((group): group is AgentImagePlanGroupKind => group === 'hero' || group === 'detail')
+      : []
+    return { status: value.status, selectedGroups }
+  } catch {
+    return null
+  }
+}
+
+export function recoverAgentSkillPlan(session: AgentSkillSession | null, rounds: AgentRound[]) {
+  if (!session || session.plan) return session?.plan ?? null
+
+  for (let roundIndex = rounds.length - 1; roundIndex >= 0; roundIndex -= 1) {
+    const round = rounds[roundIndex]
+    const output = round.responseOutput ?? []
+    for (let itemIndex = output.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = output[itemIndex]
+      if (item.type !== 'function_call' || item.name !== PLAN_FUNCTION_NAME || !item.call_id) continue
+      const decision = getPlanDecision(output, item.call_id)
+      if (decision?.status === 'dismissed') return null
+      if (decision?.status !== 'awaiting_user_confirmation' && decision?.status !== 'approved') continue
+
+      const parsed = parseAgentSkillPlanCall(session, item.arguments ?? '', round.id)
+      if (!parsed.ok) continue
+      if (decision.status === 'awaiting_user_confirmation') return parsed.plan
+      return selectAgentSkillPlanGroups(parsed.plan, decision.selectedGroups)
+    }
+  }
+  return null
+}
+
+export function setAgentSkillPlanDecision(
+  output: ResponsesOutputItem[] | undefined,
+  status: 'approved' | 'dismissed',
+  selectedGroups: AgentImagePlanGroupKind[] = [],
+) {
+  if (!output?.length) return output
+  const call = [...output].reverse().find((item) => item.type === 'function_call' && item.name === PLAN_FUNCTION_NAME && item.call_id)
+  if (!call?.call_id) return output
+
+  let changed = false
+  const updated = output.map((item) => {
+    if (item.type !== 'function_call_output' || item.call_id !== call.call_id) return item
+    changed = true
+    return {
+      ...item,
+      output: JSON.stringify({
+        status,
+        ...(status === 'approved' ? { selected_groups: selectedGroups } : {}),
+      }),
+    }
+  })
+  return changed ? updated : output
 }
 
 export function selectAgentSkillPlanGroups(plan: AgentSkillPlan, selectedKinds: AgentImagePlanGroupKind[]) {

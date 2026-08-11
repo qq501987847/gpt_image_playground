@@ -641,7 +641,9 @@ export default function AgentWorkspace() {
                 const hasRoundFavoriteTasks = favoriteTasksForRound.length > 0
                 const allRoundTasksFavorited = hasRoundFavoriteTasks && favoriteTasksForRound.every((task) => task.isFavorite)
                 const assistantBlocks = isAssistant ? getAgentAssistantBlocks(round ?? null, taskSlotsForRound, tasks, Boolean(message.content.trim())) : []
-                const skillPlan = isAssistant && conversation.skillPlan?.sourceRoundId === round?.id ? conversation.skillPlan : null
+                const skillPlan = isAssistant && conversation.skillPlan?.status === 'approved' && conversation.skillPlan.sourceRoundId === round?.id
+                  ? conversation.skillPlan
+                  : null
                 const inputImagesForRound = (round?.inputImageIds || []).map(id => ({ id, dataUrl: '' }))
                 const parts = getPromptMentionParts(message.content, inputImagesForRound)
                 return (
@@ -897,6 +899,13 @@ export default function AgentWorkspace() {
               return (
                 <>
                   {renderedMessages}
+                  {conversation.skillPlan?.status === 'review' && (
+                    <div className="mb-6 flex w-full justify-start">
+                      <div className="w-full max-w-[95%] md:max-w-[85%] lg:max-w-[75%]">
+                        <AgentSkillPlanCard conversationId={conversation.id} plan={conversation.skillPlan} />
+                      </div>
+                    </div>
+                  )}
                   {runningRounds.map((round) => (
                     <div key={`running-${round.id}`} className="flex w-full justify-start mb-6">
                       <article className="flex min-w-[16rem] max-w-[95%] flex-col rounded-2xl rounded-tl-sm border border-gray-200 bg-white/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03] md:max-w-[85%] lg:max-w-[75%]">

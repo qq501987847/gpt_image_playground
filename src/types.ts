@@ -295,6 +295,17 @@ export interface AgentMessage {
   createdAt: number
 }
 
+/** Agent 一轮中所有 Responses API 调用的累计用量。 */
+export interface AgentUsage {
+  apiCalls: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cachedInputTokens: number
+  cacheMissInputTokens: number
+  cacheWriteInputTokens: number
+}
+
 export interface AgentImagePlanItem {
   id: string
   title: string
@@ -331,6 +342,7 @@ export interface AgentRound {
   outputTaskIds: string[]
   responseId?: string
   responseOutput?: ResponsesOutputItem[]
+  usage?: AgentUsage
   status: AgentRoundStatus
   error: string | null
   createdAt: number
@@ -462,6 +474,7 @@ export interface ResponsesOutputItem {
 export interface ResponsesApiResponse {
   id?: string
   output?: ResponsesOutputItem[]
+  usage?: Record<string, unknown>
   tools?: Array<{
     type?: string
     size?: string

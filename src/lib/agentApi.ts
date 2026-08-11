@@ -1,8 +1,9 @@
-import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
+import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type AgentUsage, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { appendStreamingFormatHint, getApiErrorMessage, getResponsesImageResultBase64, maybeAppendStreamingHint, MIME_MAP, normalizeBase64Image, pickActualParams, PROMPT_REWRITE_GUARD_PREFIX } from './imageApiShared'
 import { resolveAgentSkillRequest, type AgentSkillSession } from './agentSkills'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
+import { normalizeAgentUsage } from './agentUsage'
 import { isDesktopRuntime } from './runtime'
 import { isEventStreamResponse, readJsonServerSentEvents, throwIfAborted } from './serverSentEvents'
 
@@ -24,6 +25,7 @@ export interface AgentApiResult {
   text: string
   images: AgentApiResultImage[]
   outputItems: ResponsesApiResponse['output']
+  usage?: AgentUsage
   rawResponsePayload?: string
 }
 
@@ -260,6 +262,10 @@ function getNumberValue(source: Record<string, unknown>, key: string): number | 
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+function getFirstNumber(...values: unknown[]): number | undefined {
+  return values.find((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0) as number | undefined
+}
+
 function escapeMarkdownLinkLabel(text: string) {
   return text.replace(/\\/g, '\\\\').replace(/\]/g, '\\]')
 }
@@ -399,10 +405,52 @@ function normalizeResponsePayload(value: unknown): ResponsesApiResponse | null {
   }
 }
 
+function parseAgentResponseUsage(payload: ResponsesApiResponse): AgentUsage | undefined {
+  if (!isRecordValue(payload.usage)) return undefined
+
+  const usage = payload.usage
+  const inputDetails = isRecordValue(usage.input_tokens_details) ? usage.input_tokens_details : undefined
+  const promptDetails = isRecordValue(usage.prompt_tokens_details) ? usage.prompt_tokens_details : undefined
+  const inputTokens = getFirstNumber(usage.input_tokens, usage.inputTokens, usage.prompt_tokens)
+  const outputTokens = getFirstNumber(usage.output_tokens, usage.outputTokens, usage.completion_tokens)
+  const totalTokens = getFirstNumber(usage.total_tokens, usage.totalTokens)
+  const cachedInputTokens = getFirstNumber(
+    inputDetails?.cached_tokens,
+    promptDetails?.cached_tokens,
+    usage.cached_tokens,
+    usage.cachedInputTokens,
+    usage.cache_read_input_tokens,
+    usage.prompt_cache_hit_tokens,
+  )
+  const cacheWriteInputTokens = getFirstNumber(
+    inputDetails?.cache_write_tokens,
+    promptDetails?.cache_write_tokens,
+    usage.cache_write_input_tokens,
+    usage.inputWriteCacheTokens,
+    usage.cache_creation_input_tokens,
+  )
+  const cacheMissInputTokens = getFirstNumber(
+    usage.input_cache_miss_tokens,
+    usage.cacheMissInputTokens,
+    usage.prompt_cache_miss_tokens,
+  )
+
+  return normalizeAgentUsage({
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_tokens: totalTokens,
+    cached_tokens: cachedInputTokens,
+    input_cache_miss_tokens: cacheMissInputTokens,
+    cache_write_input_tokens: cacheWriteInputTokens,
+  })
+}
+
 function getStreamResponsePayload(event: Record<string, unknown>): ResponsesApiResponse | null {
   const response = event.response
   const payload = normalizeResponsePayload(response)
   if (payload) return payload
+
+  if (isRecordValue(event.usage)) return normalizeResponsePayload({ usage: event.usage })
 
   const item = event.item
   const output = normalizeResponsesOutputItems([item])
@@ -544,8 +592,14 @@ async function parseAgentStreamResponse(
       return
     }
 
-    if (type === 'response.completed' || isRecordValue(event.response)) {
-      completedPayload = payload
+    if (payload.usage || type === 'response.completed' || isRecordValue(event.response)) {
+      completedPayload = {
+        ...completedPayload,
+        ...payload,
+        id: payload.id ?? completedPayload?.id,
+        output: payload.output?.length ? payload.output : completedPayload?.output,
+        usage: payload.usage ?? completedPayload?.usage,
+      }
     }
   }, {
     signals: [signal, callerSignal],
@@ -554,7 +608,10 @@ async function parseAgentStreamResponse(
   })
 
   throwIfAborted(signal, callerSignal)
-  const payload: ResponsesApiResponse | null = completedPayload ?? (outputItems.length ? { output: outputItems } : null)
+  const finalPayload = completedPayload as ResponsesApiResponse | null
+  const payload: ResponsesApiResponse | null = finalPayload
+    ? { ...finalPayload, output: finalPayload.output?.length ? finalPayload.output : outputItems }
+    : outputItems.length ? { output: outputItems } : null
   if (!payload) throw new Error('Agent 流式接口未返回最终响应数据')
 
   const text = extractText(payload) || streamedText.trim()
@@ -563,6 +620,7 @@ async function parseAgentStreamResponse(
     text,
     images: extractImages(payload, mime),
     outputItems: payload.output ?? [],
+    usage: parseAgentResponseUsage(payload),
     rawResponsePayload: JSON.stringify(payload, null, 2),
   }
 }
@@ -583,8 +641,9 @@ export async function callAgentResponsesApi(opts: {
   onImageToolFailed?: (event: AgentApiImageToolFailure) => void | Promise<void>
   allowImageTools?: boolean
   agentSkill?: AgentSkillSession | null
+  promptCacheKey?: string
 }): Promise<AgentApiResult> {
-  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed, allowImageTools = true, agentSkill } = opts
+  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed, allowImageTools = true, agentSkill, promptCacheKey } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -600,6 +659,7 @@ export async function callAgentResponsesApi(opts: {
       instructions: createAgentInstructions(settings, (imageProfile ?? profile).codexCli ? params.size : undefined, agentSkill),
       input,
       ...(allowImageTools ? { tools: createAgentTools(params, profile, settings, maskDataUrl, agentSkill) } : {}),
+      ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
     }
     if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
     if (profile.streamImages) {
@@ -632,6 +692,7 @@ export async function callAgentResponsesApi(opts: {
       text: extractText(payload),
       images: extractImages(payload, mime),
       outputItems: payload.output,
+      usage: parseAgentResponseUsage(payload),
       rawResponsePayload: JSON.stringify(payload, null, 2),
     }
   } finally {

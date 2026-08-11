@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
-import type { AgentConversation, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
+import type { AgentConversation, AgentSkillPlan, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 import { hasActiveDataOperations } from './lib/dataOperations'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentConversationTaskIds, getAgentRoundTaskIds, remapAgentRoundMentionsForPathChange } from './lib/agentConversationState'
@@ -3866,6 +3866,71 @@ describe('agent built-in image tool failure', () => {
       agentEditingRoundId: null,
       showToast: vi.fn(),
     })
+  })
+
+  it('keeps a pending skill plan while the user refines it', async () => {
+    const plan: AgentSkillPlan = {
+      skillId: 'ecom-details-image',
+      title: '000 耳机主图',
+      styleLock: '统一白底、香槟金点缀和棚拍光线。',
+      groups: [{
+        kind: 'hero',
+        title: '商品主图',
+        images: Array.from({ length: 5 }, (_, index) => ({
+          id: `H${index + 1}`,
+          title: `主图 ${index + 1}`,
+          prompt: `生成主图 ${index + 1}`,
+          aspectRatio: '1:1',
+          resolution: '2K',
+        })),
+      }],
+      sourceRoundId: 'round-plan',
+      status: 'review',
+    }
+    useStore.setState({
+      prompt: '卖点文字改成 XX 小时续航',
+      agentConversations: [agentConversation({
+        id: 'conversation-a',
+        skillId: 'ecom-details-image',
+        skillMode: 'hero',
+        skillPlan: plan,
+        activeRoundId: 'round-plan',
+        rounds: [{
+          id: 'round-plan',
+          index: 1,
+          parentRoundId: null,
+          userMessageId: 'user-plan',
+          assistantMessageId: 'assistant-plan',
+          prompt: '生成一套耳机主图',
+          inputImageIds: [],
+          outputTaskIds: [],
+          status: 'done',
+          error: null,
+          createdAt: 1,
+          finishedAt: 2,
+        }],
+        messages: [
+          { id: 'user-plan', role: 'user', content: '生成一套耳机主图', roundId: 'round-plan', createdAt: 1 },
+          { id: 'assistant-plan', role: 'assistant', content: '方案已整理。', roundId: 'round-plan', createdAt: 2 },
+        ],
+      })],
+    })
+    vi.mocked(callAgentResponsesApi).mockResolvedValueOnce({
+      text: '已更新卖点文案。',
+      images: [],
+      outputItems: [{ type: 'message', content: [{ type: 'output_text', text: '已更新卖点文案。' }] }],
+      responseId: 'response-plan-refinement',
+    })
+
+    await submitAgentMessage()
+    await vi.waitFor(() => {
+      const rounds = useStore.getState().agentConversations[0].rounds
+      expect(rounds[rounds.length - 1]?.status).toBe('done')
+    })
+
+    expect(useStore.getState().agentConversations[0].skillPlan).toEqual(plan)
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].agentSkill?.plan).toEqual(plan)
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].promptCacheKey).toBe('awai-agent:conversation-a')
   })
 
   it('normalizes Agent image params with the Hybrid image profile', async () => {
