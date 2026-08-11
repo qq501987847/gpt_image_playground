@@ -133,7 +133,7 @@ import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
-import { clearFailedTasks, continueAgentResponse, deleteFavoriteCollection, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, reuseConfig, stopAgentResponse, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
+import { clearFailedTasks, continueAgentResponse, deleteFavoriteCollection, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, stopAgentResponse, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const commitTaskDeletionImplementation = vi.mocked(commitTaskDeletion).getMockImplementation()!
 const deleteDbImageImplementation = vi.mocked(deleteDbImage).getMockImplementation()!
@@ -4852,6 +4852,92 @@ describe('agent batch reference resolution', () => {
     await vi.waitFor(() => {
       expect(useStore.getState().agentConversations.flatMap((conversation) => conversation.rounds).every((round) => round.status !== 'running')).toBe(true)
     })
+  })
+})
+
+describe('agent image task retry', () => {
+  const imageProfile = createDefaultOpenAIProfile({ id: 'agent-image-profile', apiKey: 'image-key', apiMode: 'images', model: 'gpt-image-2' })
+
+  beforeEach(async () => {
+    await clearTasks()
+    await clearImages()
+    vi.mocked(callImageApi).mockReset().mockResolvedValue({
+      images: ['data:image/png;base64,retried-image'],
+      actualParams: {},
+      actualParamsList: [{}],
+      revisedPrompts: [],
+    })
+  })
+
+  it('retries an Agent image task in its original round slot', async () => {
+    const failedTask = task({
+      id: 'agent-image-task',
+      prompt: '生成侧面参考图',
+      apiProvider: imageProfile.provider,
+      apiProfileId: imageProfile.id,
+      apiProfileName: imageProfile.name,
+      apiMode: imageProfile.apiMode,
+      apiModel: imageProfile.model,
+      sourceMode: 'agent',
+      agentConversationId: 'conversation-a',
+      agentRoundId: 'round-a',
+      agentMessageId: 'assistant-a',
+      agentToolCallId: 'tool-a',
+      agentBatchCallId: 'batch-a',
+      agentBatchItemId: 'side-view',
+      status: 'error',
+      error: '上游服务暂时不可用',
+      finishedAt: 2,
+      elapsed: 1,
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [imageProfile],
+        activeProfileId: imageProfile.id,
+      }),
+      tasks: [failedTask],
+      agentConversations: [agentConversation({
+        id: 'conversation-a',
+        activeRoundId: 'round-a',
+        rounds: [{
+          id: 'round-a',
+          index: 1,
+          parentRoundId: null,
+          userMessageId: 'user-a',
+          assistantMessageId: 'assistant-a',
+          prompt: '生成参考图',
+          inputImageIds: [],
+          outputTaskIds: [failedTask.id],
+          status: 'done',
+          error: null,
+          createdAt: 1,
+          finishedAt: 2,
+        }],
+        messages: [
+          { id: 'user-a', role: 'user', content: '生成参考图', roundId: 'round-a', createdAt: 1 },
+          { id: 'assistant-a', role: 'assistant', content: '部分图片失败。', roundId: 'round-a', outputTaskIds: [failedTask.id], createdAt: 2 },
+        ],
+      })],
+      showToast: vi.fn(),
+    })
+
+    await retryTask(failedTask)
+    await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+
+    const state = useStore.getState()
+    expect(state.tasks).toHaveLength(1)
+    expect(state.tasks[0]).toMatchObject({
+      id: failedTask.id,
+      sourceMode: 'agent',
+      agentConversationId: 'conversation-a',
+      agentRoundId: 'round-a',
+      agentBatchItemId: 'side-view',
+      status: 'done',
+      error: null,
+    })
+    expect(state.agentConversations[0].rounds[0].outputTaskIds).toEqual([failedTask.id])
+    expect(state.agentConversations[0].messages[1].outputTaskIds).toEqual([failedTask.id])
   })
 })
 

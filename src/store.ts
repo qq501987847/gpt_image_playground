@@ -4167,11 +4167,14 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
   useStore.getState().showToast(`已删除收藏夹「${collection.name}」`, 'success')
 }
 
-/** 重试失败的任务：创建新任务并执行 */
+/** 重试失败的任务：画廊任务创建新记录，Agent 任务复用原记录以保留会话槽位 */
 export async function retryTask(task: TaskRecord) {
   const { settings } = useStore.getState()
-  const activeProfile = getActiveApiProfile(settings)
-  const normalizedParams = normalizeParamsForSettings(task.params, settings, { hasInputImages: task.inputImageIds.length > 0 })
+  const agentTask = isAgentTask(task)
+  const taskProfile = agentTask ? getTaskApiProfile(settings, task) : null
+  const activeProfile = taskProfile ?? getActiveApiProfile(settings)
+  const requestSettings = taskProfile ? createSettingsForApiProfile(settings, taskProfile) : settings
+  const normalizedParams = normalizeParamsForSettings(task.params, requestSettings, { hasInputImages: task.inputImageIds.length > 0 })
   const shouldUseTransparentOutput = normalizedParams.output_format === 'png' && normalizedParams.transparent_output
   const taskParams = shouldUseTransparentOutput
     ? getTransparentRequestParams(normalizedParams)
@@ -4179,6 +4182,48 @@ export async function retryTask(task: TaskRecord) {
   const transparentMeta = taskParams.transparent_output
     ? createTransparentOutputMeta(task.prompt.trim())
     : null
+
+  if (agentTask) {
+    const oldImageIds = [
+      ...(task.outputImages ?? []),
+      ...(task.transparentOriginalImages ?? []),
+      ...(task.streamPartialImageIds ?? []),
+    ]
+    const retriedTask: TaskRecord = {
+      ...task,
+      params: taskParams,
+      transparentOutput: transparentMeta?.transparentOutput,
+      transparentPrompt: transparentMeta?.effectivePrompt,
+      transparentOriginalImages: undefined,
+      outputImages: [],
+      outputErrors: undefined,
+      streamPartialImageIds: undefined,
+      rawImageUrls: undefined,
+      rawResponsePayload: undefined,
+      actualParams: undefined,
+      actualParamsByImage: undefined,
+      revisedPromptByImage: undefined,
+      unsavedOutputImageIds: undefined,
+      cloudCopies: undefined,
+      falRequestId: undefined,
+      falEndpoint: undefined,
+      falRecoverable: false,
+      customTaskId: undefined,
+      customRecoverable: false,
+      status: 'running',
+      error: null,
+      createdAt: Date.now(),
+      finishedAt: null,
+      elapsed: null,
+    }
+    useStore.getState().setTaskStreamPreview(task.id)
+    useStore.getState().setTasks(useStore.getState().tasks.map((item) => item.id === task.id ? retriedTask : item))
+    await putTask(retriedTask)
+    await deleteUnreferencedImageIds(oldImageIds)
+    void executeTask(task.id)
+    return
+  }
+
   const taskId = genId()
   const newTask: TaskRecord = {
     id: taskId,

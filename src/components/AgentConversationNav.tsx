@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentConversation } from '../types'
 import { getConversationSearchText } from '../lib/agentConversationState'
 import { CloseIcon, EditIcon, PlusIcon, SidebarLeftIcon, TrashIcon } from './icons'
+import { TooltipButton } from './TooltipButton'
 
 interface AgentConversationNavProps {
   conversations: AgentConversation[]
@@ -37,8 +38,25 @@ export default function AgentConversationNav({
 }: AgentConversationNavProps) {
   const [query, setQuery] = useState('')
   const [actionsId, setActionsId] = useState<string | null>(null)
+  const actionsRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [title, setTitle] = useState('')
+  useEffect(() => {
+    if (!actionsId) return
+    const closeOnOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && actionsRef.current?.contains(event.target)) return
+      setActionsId(null)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActionsId(null)
+    }
+    document.addEventListener('pointerdown', closeOnOutside, true)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside, true)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [actionsId])
   const items = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
     const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
@@ -56,8 +74,8 @@ export default function AgentConversationNav({
       : 'hidden h-full min-h-0 w-[280px] shrink-0 flex-col border-r border-gray-200/80 pr-3 dark:border-white/[0.08] lg:flex'}
     >
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-3">
-        <button type="button" onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-[transform,background-color,color] hover:bg-gray-100 active:scale-[0.96] dark:hover:bg-white/[0.06]" aria-label="折叠会话列表"><SidebarLeftIcon className="h-5 w-5" /></button>
-        <button type="button" onClick={onCreate} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-[transform,background-color,color] hover:bg-gray-100 active:scale-[0.96] dark:hover:bg-white/[0.06]" aria-label="新建会话"><PlusIcon className="h-5 w-5" /></button>
+        <TooltipButton tooltip={mobile ? '关闭会话列表' : '折叠会话列表'} onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-[transform,background-color,color] hover:bg-gray-100 active:scale-[0.96] dark:hover:bg-white/[0.06]"><SidebarLeftIcon className="h-5 w-5" /></TooltipButton>
+        <TooltipButton tooltip="新建会话" onClick={onCreate} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-[transform,background-color,color] hover:bg-gray-100 active:scale-[0.96] dark:hover:bg-white/[0.06]"><PlusIcon className="h-5 w-5" /></TooltipButton>
       </div>
       <div className="shrink-0 px-3 pb-3">
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索会话" className="h-10 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none transition-[border-color,background-color] focus:border-blue-400 focus:bg-white dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white" />
@@ -84,7 +102,7 @@ export default function AgentConversationNav({
                   <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-400"><span>{formatTime(item.updatedAt)}</span>{status && <span className={status === '失败' ? 'text-red-500' : status === '部分完成' ? 'text-amber-600 dark:text-amber-400' : 'text-blue-500'}>{status}</span>}</span>
                 </button>
               )}
-              <div className={`relative shrink-0 ${actionsVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
+              <div ref={actionsId === item.id ? actionsRef : undefined} className={`relative shrink-0 ${actionsVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
                 <button type="button" onClick={() => setActionsId((current) => current === item.id ? null : item.id)} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 transition-[transform,background-color,color,opacity] hover:bg-gray-200 hover:text-gray-700 active:scale-[0.96] dark:hover:bg-white/[0.1] dark:hover:text-gray-200" aria-label={`${item.title} 操作`} aria-expanded={actionsId === item.id}>...</button>
                 {actionsId === item.id && <div className="absolute right-0 top-10 z-20 w-28 rounded-lg border border-gray-200 bg-white p-1 shadow-xl dark:border-white/[0.08] dark:bg-gray-900">
                   <button type="button" onClick={() => { setEditingId(item.id); setTitle(item.title); setActionsId(null) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/[0.06]"><EditIcon className="h-4 w-4" />重命名</button>

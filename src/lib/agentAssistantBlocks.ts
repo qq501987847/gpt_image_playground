@@ -6,9 +6,16 @@ const AGENT_STOPPED_MESSAGE = '已停止生成。'
 export type AgentAssistantBlock =
   | { type: 'web-search'; status: AgentWebSearchStatus; key: string }
   | { type: 'batch-params'; status: AgentWebSearchStatus; key: string }
-  | { type: 'image-task'; task: TaskRecord; key: string }
-  | { type: 'deleted-image-task'; taskId: string; key: string }
+  | { type: 'image-task'; task: TaskRecord; key: string; groupKey?: string }
+  | { type: 'deleted-image-task'; taskId: string; key: string; groupKey?: string }
   | { type: 'text'; key: string; content?: string }
+
+export type AgentAssistantImageBlock = Extract<AgentAssistantBlock, { type: 'image-task' | 'deleted-image-task' }>
+
+export type AgentAssistantNonImageBlock = Extract<AgentAssistantBlock, { type: 'web-search' | 'batch-params' | 'text' }>
+
+export type AgentAssistantRenderBlock = AgentAssistantNonImageBlock | AgentAssistantImageBlock
+  | { type: 'image-group'; key: string; groupKey: string; blocks: AgentAssistantImageBlock[] }
 
 export interface AgentRoundTaskSlot {
   taskId: string
@@ -76,12 +83,12 @@ export function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: Age
   const roundInterrupted = isAgentRoundInterrupted(round)
   const blocks: AgentAssistantBlock[] = []
   const renderedTaskIds = new Set<string>()
-  const pushTaskSlot = (slot: AgentRoundTaskSlot) => {
+  const pushTaskSlot = (slot: AgentRoundTaskSlot, groupKey?: string) => {
     if (renderedTaskIds.has(slot.taskId)) return
     renderedTaskIds.add(slot.taskId)
     blocks.push(slot.task
-      ? { type: 'image-task', task: slot.task, key: `image:${slot.taskId}` }
-      : { type: 'deleted-image-task', taskId: slot.taskId, key: `deleted-image:${slot.taskId}` })
+      ? { type: 'image-task', task: slot.task, key: `image:${slot.taskId}`, ...(groupKey ? { groupKey } : {}) }
+      : { type: 'deleted-image-task', taskId: slot.taskId, key: `deleted-image:${slot.taskId}`, ...(groupKey ? { groupKey } : {}) })
   }
 
   if (outputItems.length === 0) {
@@ -97,6 +104,7 @@ export function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: Age
     before: AgentRoundTaskSlot[]
     slots: AgentRoundTaskSlot[]
     after: AgentRoundTaskSlot[]
+    groupKey?: string
   }> = []
   const duplicateImageCallIndexes = new Set<number>()
   const imageCallKeys = new Set<string>()
@@ -138,6 +146,7 @@ export function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: Age
     if (start < 0) continue
 
     const end = start + taskCount
+    const groupKey = batchImageCall && item.call_id ? `batch:${item.call_id}` : undefined
     imageCallProjections.push({
       outputIndex,
       start,
@@ -145,6 +154,7 @@ export function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: Age
       before: [],
       slots: uniqueTaskSlots.slice(start, end),
       after: [],
+      groupKey,
     })
     nextSlotIndex = end
   }
@@ -198,7 +208,7 @@ export function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: Age
 
     const projection = imageCallProjectionByOutputIndex.get(outputIndex)
     if (projection) {
-      for (const slot of [...projection.before, ...projection.slots, ...projection.after]) pushTaskSlot(slot)
+      for (const slot of [...projection.before, ...projection.slots, ...projection.after]) pushTaskSlot(slot, projection.groupKey)
       continue
     }
     if (singleImageCall) continue
@@ -228,6 +238,24 @@ export function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: Age
   if (hasText && renderedTextBlocks === 0) blocks.push({ type: 'text', key: 'text:fallback' })
   for (const slot of uniqueTaskSlots) pushTaskSlot(slot)
   return blocks
+}
+
+export function groupAgentAssistantBlocks(blocks: AgentAssistantBlock[]): AgentAssistantRenderBlock[] {
+  const grouped: AgentAssistantRenderBlock[] = []
+  for (const block of blocks) {
+    const isImageBlock = block.type === 'image-task' || block.type === 'deleted-image-task'
+    const previous = grouped[grouped.length - 1]
+    if (isImageBlock && block.groupKey && previous?.type === 'image-group' && previous.groupKey === block.groupKey) {
+      previous.blocks.push(block)
+      continue
+    }
+    if (isImageBlock && block.groupKey) {
+      grouped.push({ type: 'image-group', key: `image-group:${block.groupKey}`, groupKey: block.groupKey, blocks: [block] })
+      continue
+    }
+    grouped.push(block)
+  }
+  return grouped
 }
 
 export function getAgentAssistantCopyContent(fallbackContent: string, blocks: AgentAssistantBlock[]) {

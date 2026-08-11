@@ -5,6 +5,7 @@ import {
   getAgentAssistantBlocks,
   getAgentAssistantCopyContent,
   getRoundTaskSlots,
+  groupAgentAssistantBlocks,
   type AgentAssistantBlock,
 } from './agentAssistantBlocks'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
@@ -218,6 +219,21 @@ describe('agent assistant blocks', () => {
     ])
   })
 
+  it('marks every image in a batch with the same group key', () => {
+    const tasks = Array.from({ length: 7 }, (_, index) => task(`batch-task-${index + 1}`, { agentBatchCallId: 'batch-7' }))
+    const currentRound = round({
+      outputTaskIds: tasks.map((item) => item.id),
+      responseOutput: [batchCall('batch-7', 7)],
+    })
+
+    const imageBlocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, tasks), tasks, false)
+      .filter((block): block is Extract<AgentAssistantBlock, { type: 'image-task' }> => block.type === 'image-task')
+
+    expect(imageBlocks).toHaveLength(7)
+    expect(new Set(imageBlocks.map((block) => block.groupKey))).toEqual(new Set(['batch:batch-7']))
+    expect(groupAgentAssistantBlocks(imageBlocks)).toMatchObject([{ type: 'image-group', blocks: imageBlocks }])
+  })
+
   it('de-duplicates repeated batch calls and task slots', () => {
     const liveTask = task('task-live', { agentBatchCallId: 'batch-1' })
     const call = batchCall('batch-1', 2)
@@ -303,5 +319,23 @@ describe('agent assistant blocks', () => {
 
     expect(getAgentAssistantCopyContent('回退文本', mixedBlocks)).toBe('第一段\n\n第二段')
     expect(getAgentAssistantCopyContent('保留原始格式', [{ type: 'text', key: 'text:fallback' }])).toBe('保留原始格式')
+  })
+
+  it('groups only images from the same batch while preserving surrounding blocks', () => {
+    const blocks: AgentAssistantBlock[] = [
+      { type: 'text', key: 'text:before', content: '前文' },
+      { type: 'image-task', key: 'image:1', groupKey: 'batch:a', task: task('task-1') },
+      { type: 'deleted-image-task', key: 'deleted:image:2', groupKey: 'batch:a', taskId: 'task-2' },
+      { type: 'text', key: 'text:middle', content: '中间' },
+      { type: 'image-task', key: 'image:3', groupKey: 'batch:b', task: task('task-3') },
+      { type: 'image-task', key: 'image:4', groupKey: 'batch:b', task: task('task-4') },
+    ]
+
+    const grouped = groupAgentAssistantBlocks(blocks)
+    expect(grouped.map((block) => block.type)).toEqual(['text', 'image-group', 'text', 'image-group'])
+    expect(grouped.filter((block) => block.type === 'image-group').map((block) => block.blocks.map((item) => item.key))).toEqual([
+      ['image:1', 'deleted:image:2'],
+      ['image:3', 'image:4'],
+    ])
   })
 })

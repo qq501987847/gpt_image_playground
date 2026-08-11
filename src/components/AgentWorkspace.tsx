@@ -6,7 +6,7 @@ import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { getPromptMentionParts } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import type { AgentWebSearchStatus } from '../lib/agentWebSearch'
-import { getAgentAssistantBlocks, getAgentAssistantCopyContent, getRoundTaskSlots } from '../lib/agentAssistantBlocks'
+import { getAgentAssistantBlocks, getAgentAssistantCopyContent, getRoundTaskSlots, groupAgentAssistantBlocks } from '../lib/agentAssistantBlocks'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
 import TaskCard from './TaskCard'
@@ -641,6 +641,7 @@ export default function AgentWorkspace() {
                 const hasRoundFavoriteTasks = favoriteTasksForRound.length > 0
                 const allRoundTasksFavorited = hasRoundFavoriteTasks && favoriteTasksForRound.every((task) => task.isFavorite)
                 const assistantBlocks = isAssistant ? getAgentAssistantBlocks(round ?? null, taskSlotsForRound, tasks, Boolean(message.content.trim())) : []
+                const assistantRenderBlocks = groupAgentAssistantBlocks(assistantBlocks)
                 const skillPlan = isAssistant && conversation.skillPlan?.status === 'approved' && conversation.skillPlan.sourceRoundId === round?.id
                   ? conversation.skillPlan
                   : null
@@ -715,13 +716,35 @@ export default function AgentWorkspace() {
                       <div data-selectable-text className={`text-[15px] leading-relaxed text-gray-800 dark:text-gray-100 ${!isAssistant ? 'select-text' : ''}`}>
                         {isAssistant ? (
                           <>
-                            {assistantBlocks.length > 0 ? assistantBlocks.map((block, index) => {
+                            {assistantRenderBlocks.length > 0 ? assistantRenderBlocks.map((block, index) => {
                               if (block.type === 'web-search') return <AgentWebSearchStatusLines key={block.key} statuses={[block.status]} />
                               if (block.type === 'text') return <div key={block.key} className={index > 0 ? 'mt-3' : undefined}><MarkdownRenderer content={block.content ?? message.content} streaming={isStreamingAssistant} /></div>
                               if (block.type === 'batch-params') {
                                 return (
                                   <div key={block.key} className={index > 0 ? 'mt-3' : undefined}>
                                     <AgentWebSearchInlineStatus status={block.status} />
+                                  </div>
+                                )
+                              }
+                              if (block.type === 'image-group') {
+                                return (
+                                  <div key={block.key} className={`mt-4 grid grid-cols-1 gap-4 ${sidebarCollapsed ? 'lg:grid-cols-3' : 'sm:grid-cols-2'}`}>
+                                    {block.blocks.map((imageBlock) => imageBlock.type === 'deleted-image-task' ? (
+                                      <div key={imageBlock.key} className="w-full rounded-xl bg-gray-50/50 dark:bg-white/[0.02] border border-dashed border-gray-200 dark:border-white/[0.08] p-4 flex min-h-[120px] flex-col items-center justify-center text-gray-400 dark:text-gray-500" onClick={e => e.stopPropagation()}>
+                                        <TrashIcon className="w-6 h-6 mb-2 opacity-50" />
+                                        <span className="text-xs">[Image Removed]</span>
+                                      </div>
+                                    ) : (
+                                      <TaskCard
+                                        key={imageBlock.key}
+                                        task={imageBlock.task}
+                                        disableSwipe={true}
+                                        onClick={() => setDetailTaskId(imageBlock.task.id)}
+                                        onReuse={() => handleReuse(imageBlock.task)}
+                                        onEditOutputs={() => editOutputs(imageBlock.task)}
+                                        onDelete={() => setConfirmDialog({ title: '删除任务', message: '确定要删除这个任务吗？', action: () => removeTask(imageBlock.task) })}
+                                      />
+                                    ))}
                                   </div>
                                 )
                               }
