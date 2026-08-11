@@ -11,6 +11,7 @@ import {
   getPersistableAgentConversations,
   getPersistableRawResponsePayload,
   mergeResponseOutputItems,
+  reconcileInterruptedAgentConversations,
   sanitizeResponseOutputForInput,
   scrubResponseOutputForDeletedAgentTasks,
   scrubTaskRawResponsePayloadForDeletedTasks,
@@ -354,6 +355,65 @@ describe('deleted Agent task response scrubbing', () => {
 })
 
 describe('Agent response recovery derivation', () => {
+  it('reconciles an interrupted round with saved paid output into an idempotent partial checkpoint', () => {
+    const savedTask = task('saved-task', {
+      agentRoundId: 'round-a',
+      agentToolCallId: 'image-call',
+    })
+    const value = conversation([{
+      type: 'function_call',
+      name: 'generate_image',
+      call_id: 'image-call',
+      arguments: JSON.stringify({ id: 'hero', prompt: '画主图' }),
+    }])
+    value.rounds[0] = round({
+      outputTaskIds: [savedTask.id],
+      responseOutput: value.rounds[0].responseOutput,
+      status: 'error',
+      error: '上次请求已中断',
+      finishedAt: null,
+    })
+    value.messages = [{ id: 'user-a', role: 'user', content: '画主图', roundId: 'round-a', createdAt: 1 }]
+
+    const reconciled = reconcileInterruptedAgentConversations([value], [savedTask], 10)
+    const result = reconciled[0]
+
+    expect(result.rounds[0]).toMatchObject({
+      assistantMessageId: 'agent-recovery-conversation-a-round-a',
+      status: 'partial',
+      error: '页面刷新中断了后续回复，已生成图片可继续使用。',
+      finishedAt: 10,
+    })
+    expect(result.rounds[0].responseOutput?.filter((item) => item.type === 'function_call_output')).toEqual([{
+      type: 'function_call_output',
+      call_id: 'image-call',
+      output: JSON.stringify({ id: 'hero', status: 'done' }),
+    }])
+    expect(result.messages[1]).toMatchObject({
+      id: 'agent-recovery-conversation-a-round-a',
+      role: 'assistant',
+      content: '图像已生成，回复尚未完成。',
+      outputTaskIds: [savedTask.id],
+    })
+    expect(reconcileInterruptedAgentConversations(reconciled, [savedTask], 20)).toBe(reconciled)
+  })
+
+  it('settles an interrupted text-only round as a visible error without making a request', () => {
+    const value = conversation([])
+    value.rounds[0] = round({ status: 'error', error: '上次请求已中断', finishedAt: null })
+    value.messages = [{ id: 'user-a', role: 'user', content: '解释一下', roundId: 'round-a', createdAt: 1 }]
+
+    const [reconciled] = reconcileInterruptedAgentConversations([value], [], 10)
+
+    expect(reconciled.rounds[0]).toMatchObject({
+      assistantMessageId: 'agent-recovery-conversation-a-round-a',
+      status: 'error',
+      error: '上次请求已中断',
+      finishedAt: 10,
+    })
+    expect(reconciled.messages[1]).toMatchObject({ content: '请求失败：上次请求已中断' })
+  })
+
   it('derives single and historical batch outputs without duplicating completed calls', () => {
     const single = task('single', { agentRoundId: 'round-a', agentToolCallId: 'single-call' })
     const batchA = task('batch-a', { agentRoundId: 'round-a', agentBatchCallId: 'batch-call' })

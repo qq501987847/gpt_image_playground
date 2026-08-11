@@ -1,6 +1,9 @@
 import type { AgentConversation, AgentRound, ResponsesApiResponse, ResponsesOutputItem, TaskRecord } from '../types'
 import { parseBatchImageCallArguments } from './agentApi'
+import { AGENT_ROUND_INTERRUPTED_ERROR } from './agentConversationState'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
+
+export const AGENT_ROUND_RECOVERABLE_ERROR = '页面刷新中断了后续回复，已生成图片可继续使用。'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -414,6 +417,70 @@ export function createReadyAgentRecoveredToolState(round: AgentRound, tasks: Tas
     recoveredTaskIds: roundTasks.map((task) => task.id),
     allSuccessful: roundTasks.every((task) => task.status === 'done' && task.outputImages.length > 0),
   }
+}
+
+export function reconcileInterruptedAgentConversations(conversations: AgentConversation[], tasks: TaskRecord[], now = Date.now()) {
+  let changed = false
+  const next = conversations.map((conversation) => {
+    let messages = conversation.messages
+    let conversationChanged = false
+    const rounds = conversation.rounds.map((round) => {
+      if (round.status !== 'error' || round.error !== AGENT_ROUND_INTERRUPTED_ERROR) return round
+
+      const recovered = createReadyAgentRecoveredToolState(round, tasks)
+      const recoveredTaskIds = recovered?.recoveredTaskIds.filter((taskId) => {
+        const task = tasks.find((item) => item.id === taskId)
+        return task?.status === 'done' && task.outputImages.length > 0
+      }) ?? []
+      const canContinue = Boolean(recovered && recoveredTaskIds.length > 0)
+      const existingMessage = round.assistantMessageId
+        ? messages.find((message) => message.id === round.assistantMessageId && message.role === 'assistant')
+        : messages.find((message) => message.roundId === round.id && message.role === 'assistant')
+      const assistantMessageId = existingMessage?.id ?? `agent-recovery-${conversation.id}-${round.id}`
+      const content = existingMessage?.content.trim()
+        ? existingMessage.content
+        : canContinue
+        ? '图像已生成，回复尚未完成。'
+        : `请求失败：${AGENT_ROUND_INTERRUPTED_ERROR}`
+      const outputTaskIds = canContinue
+        ? [...new Set([...(existingMessage?.outputTaskIds ?? []), ...recoveredTaskIds])]
+        : existingMessage?.outputTaskIds
+      const assistantMessage = {
+        ...(existingMessage ?? {
+          id: assistantMessageId,
+          role: 'assistant' as const,
+          roundId: round.id,
+          createdAt: now,
+        }),
+        content,
+        ...(outputTaskIds?.length ? { outputTaskIds } : {}),
+      }
+      messages = existingMessage
+        ? messages.map((message) => message.id === assistantMessageId ? assistantMessage : message)
+        : [...messages, assistantMessage]
+      conversationChanged = true
+
+      if (!canContinue || !recovered) {
+        return { ...round, assistantMessageId, finishedAt: round.finishedAt ?? now }
+      }
+
+      return {
+        ...round,
+        assistantMessageId,
+        outputTaskIds: [...new Set([...round.outputTaskIds, ...recoveredTaskIds])],
+        responseOutput: mergeResponseOutputItems(round.responseOutput ?? [], recovered.additions),
+        status: 'partial' as const,
+        error: AGENT_ROUND_RECOVERABLE_ERROR,
+        finishedAt: round.finishedAt ?? now,
+      }
+    })
+
+    if (!conversationChanged) return conversation
+    changed = true
+    return { ...conversation, updatedAt: now, rounds, messages }
+  })
+
+  return changed ? next : conversations
 }
 
 export function getAgentRecoveredToolCallCount(output: ResponsesOutputItem[], tasks: TaskRecord[]) {

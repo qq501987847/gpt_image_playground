@@ -677,6 +677,60 @@ describe('agent conversation persistence', () => {
     expect(stored.map((conversation) => conversation.id)).toEqual(['stored-conversation', 'legacy-conversation'])
   })
 
+  it('restores a refreshed Agent round from its saved image result without resubmitting', async () => {
+    await clearTasks()
+    const savedTask = task({
+      id: 'saved-agent-task',
+      outputImages: ['saved-image'],
+      sourceMode: 'agent',
+      agentConversationId: 'conversation-a',
+      agentRoundId: 'round-a',
+      agentToolCallId: 'image-call',
+    })
+    const conversation = agentConversation({
+      id: 'conversation-a',
+      activeRoundId: 'round-a',
+      rounds: [{
+        id: 'round-a',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'user-a',
+        prompt: '画主图',
+        inputImageIds: [],
+        outputTaskIds: [savedTask.id],
+        responseOutput: [{
+          type: 'function_call',
+          name: 'generate_image',
+          call_id: 'image-call',
+          arguments: JSON.stringify({ id: 'hero', prompt: '画主图' }),
+        }],
+        status: 'running',
+        error: null,
+        createdAt: 1,
+        finishedAt: null,
+      }],
+      messages: [{ id: 'user-a', role: 'user', content: '画主图', roundId: 'round-a', createdAt: 1 }],
+    })
+    vi.mocked(callAgentResponsesApi).mockClear()
+    useStore.setState({ tasks: [], agentConversations: [], activeAgentConversationId: null })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await putDbTask(savedTask)
+    await putAgentConversation(conversation)
+
+    await initStore()
+    await initStore()
+
+    const state = useStore.getState()
+    const recoveredRound = state.agentConversations[0].rounds[0]
+    expect(recoveredRound).toMatchObject({ status: 'partial', outputTaskIds: [savedTask.id] })
+    expect(recoveredRound.responseOutput?.filter((item) => item.type === 'function_call_output')).toHaveLength(1)
+    expect(state.agentConversations[0].messages.find((message) => message.role === 'assistant')).toMatchObject({
+      outputTaskIds: [savedTask.id],
+    })
+    expect(callAgentResponsesApi).not.toHaveBeenCalled()
+    expect((await getAllAgentConversations())[0].rounds[0].status).toBe('partial')
+  })
+
   it('strips generated image payloads from legacy task raw payloads during startup migration', async () => {
     await putDbTask(task({
       id: 'legacy-task',
@@ -4550,7 +4604,9 @@ describe('agent built-in image tool failure', () => {
       responseId: 'continued-response',
     })
 
-    await continueAgentResponse('conversation-a', 'round-a')
+    const firstContinue = continueAgentResponse('conversation-a', 'round-a')
+    const duplicateContinue = continueAgentResponse('conversation-a', 'round-a')
+    await Promise.all([firstContinue, duplicateContinue])
     await vi.waitFor(() => expect(useStore.getState().agentConversations[0].rounds[0].status).toBe('done'))
 
     expect(callImageApi).not.toHaveBeenCalled()

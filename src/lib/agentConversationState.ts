@@ -2,6 +2,8 @@ import type { AgentConversation, AgentMessage, AgentRound, TaskRecord } from '..
 import { normalizeAgentSkillConversation } from './agentSkills'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
 
+export const AGENT_ROUND_INTERRUPTED_ERROR = '上次请求已中断'
+
 const AGENT_ROUND_IMAGE_MENTION_RE = /@(?:第)?(\d+)轮图(\d+)/g
 
 function normalizeStringArray(value: unknown): string[] {
@@ -22,7 +24,7 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
 
   const status = round.status === 'running'
     ? 'error'
-    : round.status === 'error' || round.status === 'done'
+    : round.status === 'error' || round.status === 'partial' || round.status === 'done'
     ? round.status
     : 'done'
   const responseOutput = Array.isArray(round.responseOutput) ? normalizeResponsesOutputItems(round.responseOutput) : undefined
@@ -41,8 +43,8 @@ function normalizeAgentRound(value: unknown, fallbackIndex: number): AgentRound 
     ...(typeof round.responseId === 'string' ? { responseId: round.responseId } : {}),
     ...(responseOutput ? { responseOutput } : {}),
     status,
-    error: status === 'error'
-      ? typeof round.error === 'string' ? round.error : '上次请求已中断'
+    error: status === 'error' || status === 'partial'
+      ? typeof round.error === 'string' ? round.error : AGENT_ROUND_INTERRUPTED_ERROR
       : null,
     createdAt: typeof round.createdAt === 'number' ? round.createdAt : Date.now(),
     finishedAt: typeof round.finishedAt === 'number' ? round.finishedAt : null,

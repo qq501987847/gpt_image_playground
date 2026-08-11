@@ -141,6 +141,18 @@ describe('agent conversation state', () => {
     ])
   })
 
+  it('preserves a recoverable partial round and its error across reloads', () => {
+    const value = conversation([round('round-a', null, 1)], 'round-a')
+    value.rounds = [{ ...value.rounds[0], status: 'partial', error: '图片已保留', finishedAt: 2 }]
+    const normalized = normalizeAgentConversations([value])
+
+    expect(normalized[0].rounds[0]).toMatchObject({
+      status: 'partial',
+      error: '图片已保留',
+      finishedAt: 2,
+    })
+  })
+
   it('keeps the first entity when persisted IDs are duplicated', () => {
     const normalized = normalizeAgentConversations([{
       id: 'conversation-a',
