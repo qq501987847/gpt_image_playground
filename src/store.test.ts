@@ -120,7 +120,6 @@ vi.mock('./lib/agentApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./lib/agentApi')>()
   return {
     ...actual,
-    callAgentConversationTitleApi: vi.fn(async () => '标题'),
     callAgentResponsesApi: vi.fn(() => new Promise(() => {})),
     callBatchImageSingle: vi.fn(async (opts: { batchItemId: string; prompt: string }) => ({
       batchItemId: opts.batchItemId,
@@ -2644,7 +2643,7 @@ describe('agent context for removed outputs', () => {
         profiles: [profile],
         activeProfileId: profile.id,
       }),
-      prompt: '继续',
+      prompt: '参考 @第1轮图2 继续',
       inputImages: [],
       maskDraft: null,
       params: { ...DEFAULT_PARAMS },
@@ -2723,6 +2722,7 @@ describe('agent context for removed outputs', () => {
       ],
     }, null, 2)
     useStore.setState((state) => ({
+      prompt: '参考 @第1轮图2 继续',
       tasks: [task({
         id: 'task-live',
         outputImages: ['image-live'],
@@ -2765,6 +2765,7 @@ describe('agent context for removed outputs', () => {
       output: [{ type: 'image_generation_call' }],
     }, null, 2)
     useStore.setState((state) => ({
+      prompt: '参考 @第1轮图1 继续',
       tasks: [task({
         id: 'task-live',
         outputImages: ['image-hydrate'],
@@ -2802,6 +2803,7 @@ describe('agent context for removed outputs', () => {
       ],
     }, null, 2)
     useStore.setState((state) => ({
+      prompt: '参考 @第1轮图1 继续',
       tasks: [task({
         id: 'legacy-task-live',
         outputImages: ['image-legacy'],
@@ -2847,6 +2849,7 @@ describe('agent context for removed outputs', () => {
       output: [{ type: 'image_generation_call', id: 'batch-call-2', result: 'batch-base64-2' }],
     }, null, 2)
     useStore.setState((state) => ({
+      prompt: '参考 @第1轮图1 和 @第1轮图2 继续',
       tasks: [
         task({
           id: 'task-batch-1',

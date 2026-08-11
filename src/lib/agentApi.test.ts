@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
 import { createDefaultOpenAIProfile, DEFAULT_SETTINGS } from './apiProfiles'
-import { callAgentConversationTitleApi, callAgentResponsesApi, parseBatchImageCallArguments } from './agentApi'
+import { callAgentResponsesApi, parseBatchImageCallArguments } from './agentApi'
 
 describe('parseBatchImageCallArguments', () => {
   it('trims ids and prompts, fills missing ids, and skips empty prompts', () => {
@@ -328,40 +328,6 @@ describe('callAgentResponsesApi', () => {
     })).rejects.toMatchObject({ name: 'AbortError' })
 
     expect(textDeltas).toEqual(['Hel'])
-  })
-
-  it('generates a short conversation title without image tools', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      output: [{
-        type: 'message',
-        content: [{ type: 'output_text', text: '<title>生成猫咪头像</title>' }],
-      }],
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))
-    const profile = createDefaultOpenAIProfile({
-      apiKey: 'test-key',
-      apiMode: 'responses',
-      streamImages: true,
-      reasoningEffort: 'max',
-    })
-
-    const title = await callAgentConversationTitleApi({
-      settings: DEFAULT_SETTINGS,
-      profile,
-      prompt: '帮我生成一张橘猫头像，要赛博朋克风格',
-    })
-
-    const [, init] = fetchMock.mock.calls[0]
-    const body = JSON.parse(String((init as RequestInit).body))
-    expect(body.instructions).toContain('<title>short title</title>')
-    expect(body.reasoning).toEqual({ effort: 'max' })
-    expect(body.max_output_tokens).toBeUndefined()
-    expect(body.tools).toBeUndefined()
-    expect(body.stream).toBeUndefined()
-    expect(body.input[0].content[0].text).toContain('帮我生成一张橘猫头像，要赛博朋克风格')
-    expect(title).toBe('生成猫咪头像')
   })
 
   it('requests web search and applies citations', async () => {

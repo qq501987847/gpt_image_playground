@@ -78,6 +78,15 @@ function AgentStreamingCursor() {
   )
 }
 
+function AgentWaitingStatus({ hasImages }: { hasImages: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+      <span>{hasImages ? '正在准备参考图并等待模型响应' : '正在等待模型响应'}</span>
+      <AgentStreamingCursor />
+    </span>
+  )
+}
+
 function AgentWebSearchInlineStatus({ status }: { status: AgentWebSearchStatus }) {
   return (
     <span className="inline-flex text-sm font-medium text-gray-500 dark:text-gray-400">
@@ -132,7 +141,6 @@ export default function AgentWorkspace() {
   const setActiveAgentRoundId = useStore((s) => s.setActiveAgentRoundId)
   const showToast = useStore((s) => s.showToast)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
-  const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
   const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -546,7 +554,6 @@ export default function AgentWorkspace() {
         mobile
         conversations={conversations}
         activeConversationId={activeConversationId}
-        generatingTitleIds={agentGeneratingTitleIds}
         onClose={() => setSidebarCollapsed(true)}
         onCreate={createConversation}
         onSelect={handleConversationSelect}
@@ -556,7 +563,6 @@ export default function AgentWorkspace() {
       {!sidebarCollapsed && <AgentConversationNav
         conversations={conversations}
         activeConversationId={activeConversationId}
-        generatingTitleIds={agentGeneratingTitleIds}
         onClose={() => setSidebarCollapsed(true)}
         onCreate={createConversation}
         onSelect={handleConversationSelect}
@@ -737,7 +743,7 @@ export default function AgentWorkspace() {
                                   />
                                 </div>
                               )
-                            }) : isStreamingAssistant ? <AgentStreamingCursor /> : null}
+                            }) : isStreamingAssistant ? <AgentWaitingStatus hasImages={Boolean(round?.inputImageIds.length)} /> : null}
                           </>
                         ) : parts.some((part) => part.type === 'mention') ? (
                           <div className="whitespace-pre-wrap break-words">
@@ -897,16 +903,7 @@ export default function AgentWorkspace() {
                         <div className="mb-2 text-sm text-gray-500 dark:text-gray-400">
                           <span className="text-blue-600 dark:text-blue-400 font-semibold">Agent</span> <span className="ml-1 font-normal opacity-60">· 第 {round.index} 轮</span>
                         </div>
-                        <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
-                          <span className="inline-flex items-center gap-1.5">
-                            <span>正在生成回复</span>
-                            <span className="flex gap-1">
-                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
-                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
-                            </span>
-                          </span>
-                        </div>
+                        <AgentWaitingStatus hasImages={round.inputImageIds.length > 0} />
                       </article>
                     </div>
                   ))}

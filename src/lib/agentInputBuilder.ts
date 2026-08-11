@@ -2,13 +2,23 @@ import type { AgentConversation, AgentMessage, AgentRound, ResponsesOutputItem, 
 import { getAgentRoundPath } from './agentConversationState'
 import {
   collectAgentRoundOutputImageSlots,
+  extractAgentReferenceIds,
   getAgentCurrentReferenceId,
   getAgentGeneratedImageReferenceId,
   replaceAgentPromptImageReferencesForApi,
 } from './agentImageReferences'
+import { getDataUrlByteLength } from './agentObservationImage'
 import { getAgentRoundResponseOutput, sanitizeResponseOutputForInput } from './agentResponseState'
 
 type LoadImage = (id: string) => Promise<string | null | undefined>
+type ImagePart = { type: string; text?: string; image_url?: string }
+
+type AgentImageCandidate = {
+  imageId: string
+  referenceId: string
+}
+
+const AGENT_IMAGE_CONTEXT_MAX_BYTES = 8 * 1024 * 1024
 
 interface BuildAgentApiInputOptions {
   conversation: AgentConversation
@@ -19,6 +29,7 @@ interface BuildAgentApiInputOptions {
 
 interface BuildAgentContinuationInputOptions {
   baseInput: unknown[]
+  conversation: AgentConversation
   currentRound: AgentRound
   tasks: TaskRecord[]
   currentRoundOutput: ResponsesOutputItem[]
@@ -30,18 +41,107 @@ interface BuildAgentContinuationInputOptions {
   continuationOnly?: boolean
 }
 
-async function createUserInputItem(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function getAgentImageCandidates(
+  conversation: AgentConversation,
+  currentRound: AgentRound,
+  tasks: TaskRecord[],
+) {
+  const rounds = getAgentRoundPath(conversation, currentRound.id)
+  const workflow: AgentImageCandidate[] = currentRound.inputImageIds.map((imageId, index) => ({
+    imageId,
+    referenceId: getAgentCurrentReferenceId(currentRound, index),
+  }))
+
+  const skillPlan = conversation.skillPlan?.status === 'approved' ? conversation.skillPlan : null
+  const skillSourceRound = skillPlan && rounds.some((round) => round.id === skillPlan.sourceRoundId)
+    ? rounds.find((round) => round.id === skillPlan.sourceRoundId)
+    : null
+  if (skillSourceRound && skillSourceRound.id !== currentRound.id) {
+    workflow.push(...skillSourceRound.inputImageIds.map((imageId, index) => ({
+      imageId,
+      referenceId: getAgentCurrentReferenceId(skillSourceRound, index),
+    })))
+  }
+
+  const currentMessage = conversation.messages.find((message) => message.id === currentRound.userMessageId)
+  if (!currentMessage) return { workflow, historical: [] }
+
+  const text = replaceAgentPromptImageReferencesForApi(currentMessage.content, currentRound, rounds, tasks)
+  const historical: AgentImageCandidate[] = []
+  for (const referenceId of extractAgentReferenceIds(text)) {
+    const match = referenceId.match(/^round-(\d+)-image-(\d+)$/)
+    if (!match) continue
+    const round = rounds.find((item) => item.index === Number(match[1]))
+    const imageId = round ? collectAgentRoundOutputImageSlots(round, tasks)[Number(match[2]) - 1] : null
+    if (imageId) historical.push({ imageId, referenceId })
+  }
+  return { workflow, historical }
+}
+
+async function selectAgentImages(
+  candidates: AgentImageCandidate[],
+  loadImage: LoadImage,
+  initialBytes = 0,
+  initialImageIds: Set<string> = new Set(),
+  initialDataUrls: Set<string> = new Set(),
+) {
+  const selected = new Map<string, string>()
+  const imageIds = new Set(initialImageIds)
+  const dataUrls = new Set(initialDataUrls)
+  let bytes = initialBytes
+
+  for (const candidate of candidates) {
+    if (imageIds.has(candidate.imageId)) continue
+    imageIds.add(candidate.imageId)
+    const dataUrl = await loadImage(candidate.imageId)
+    if (!dataUrl || dataUrls.has(dataUrl)) continue
+    const nextBytes = bytes + getDataUrlByteLength(dataUrl)
+    if (nextBytes > AGENT_IMAGE_CONTEXT_MAX_BYTES) continue
+    selected.set(candidate.referenceId, dataUrl)
+    dataUrls.add(dataUrl)
+    bytes = nextBytes
+  }
+
+  return { selected, imageIds, dataUrls, bytes }
+}
+
+function getInputImageDataUrls(input: unknown[]) {
+  const dataUrls: string[] = []
+  for (const item of input) {
+    if (!isRecord(item) || !Array.isArray(item.content)) continue
+    for (const part of item.content) {
+      if (!isRecord(part) || part.type !== 'input_image' || typeof part.image_url !== 'string') continue
+      dataUrls.push(part.image_url)
+    }
+  }
+  return dataUrls
+}
+
+function filterInputImages(input: unknown[], allowedDataUrls: Set<string>) {
+  const emitted = new Set<string>()
+  return input.map((item) => {
+    if (!isRecord(item) || !Array.isArray(item.content)) return item
+    const content = item.content.filter((part) => {
+      if (!isRecord(part) || part.type !== 'input_image' || typeof part.image_url !== 'string') return true
+      if (!allowedDataUrls.has(part.image_url) || emitted.has(part.image_url)) return false
+      emitted.add(part.image_url)
+      return true
+    })
+    return content.length === item.content.length ? item : { ...item, content }
+  })
+}
+
+function createUserInputItem(
   conversation: AgentConversation,
   round: AgentRound,
   message: AgentMessage,
   tasks: TaskRecord[],
-  loadImage: LoadImage,
+  selectedImages: Map<string, string>,
 ) {
-  const imageDataUrls: string[] = []
-  for (const id of round.inputImageIds) {
-    const dataUrl = await loadImage(id)
-    if (dataUrl) imageDataUrls.push(dataUrl)
-  }
   const rounds = getAgentRoundPath(conversation, round.id)
   const text = replaceAgentPromptImageReferencesForApi(message.content, round, rounds, tasks)
   const referenceText = round.inputImageIds.length > 0
@@ -51,7 +151,10 @@ async function createUserInputItem(
     role: 'user',
     content: [
       { type: 'input_text', text: `${text}${referenceText}` },
-      ...imageDataUrls.map((dataUrl) => ({ type: 'input_image', image_url: dataUrl })),
+      ...round.inputImageIds.flatMap((_, index) => {
+        const dataUrl = selectedImages.get(getAgentCurrentReferenceId(round, index))
+        return dataUrl ? [{ type: 'input_image', image_url: dataUrl }] : []
+      }),
     ],
   }
 }
@@ -74,8 +177,8 @@ function createGeneratedImageReferencePart(round: AgentRound, task: TaskRecord, 
   }
 }
 
-async function createGeneratedImagesInputItem(round: AgentRound, tasks: TaskRecord[], loadImage: LoadImage) {
-  const content: Array<{ type: string; text?: string; image_url?: string }> = []
+function createGeneratedImagesInputItem(round: AgentRound, tasks: TaskRecord[], selectedImages: Map<string, string>) {
+  const content: ImagePart[] = []
   let imageIndex = 0
   for (const taskId of round.outputTaskIds) {
     const task = tasks.find((item) => item.id === taskId)
@@ -84,8 +187,8 @@ async function createGeneratedImagesInputItem(round: AgentRound, tasks: TaskReco
       imageIndex += 1
       continue
     }
-    for (const imageId of task.outputImages) {
-      const dataUrl = await loadImage(imageId)
+    for (let outputIndex = 0; outputIndex < task.outputImages.length; outputIndex += 1) {
+      const dataUrl = selectedImages.get(getAgentGeneratedImageReferenceId(round, imageIndex))
       if (dataUrl) content.push({ type: 'input_image', image_url: dataUrl })
       content.push(createGeneratedImageReferencePart(round, task, imageIndex))
       imageIndex += 1
@@ -94,8 +197,8 @@ async function createGeneratedImagesInputItem(round: AgentRound, tasks: TaskReco
   return content.length > 0 ? { role: 'user', content } : null
 }
 
-async function createBatchImagesInputItem(round: AgentRound, tasks: TaskRecord[], batchTaskIds: string[], loadImage: LoadImage) {
-  const content: Array<{ type: string; text?: string; image_url?: string }> = []
+function createBatchImagesInputItem(round: AgentRound, tasks: TaskRecord[], batchTaskIds: string[], selectedImages: Map<string, string>) {
+  const content: ImagePart[] = []
   let baseImageIndex = 0
   for (const taskId of round.outputTaskIds) {
     if (batchTaskIds.includes(taskId)) break
@@ -107,8 +210,8 @@ async function createBatchImagesInputItem(round: AgentRound, tasks: TaskRecord[]
   for (const taskId of batchTaskIds) {
     const task = tasks.find((item) => item.id === taskId)
     if (!task || task.status !== 'done') continue
-    for (const imageId of task.outputImages) {
-      const dataUrl = await loadImage(imageId)
+    for (let outputIndex = 0; outputIndex < task.outputImages.length; outputIndex += 1) {
+      const dataUrl = selectedImages.get(getAgentGeneratedImageReferenceId(round, imageIndex))
       if (dataUrl) content.push({ type: 'input_image', image_url: dataUrl })
       content.push(createGeneratedImageReferencePart(round, task, imageIndex))
       imageIndex += 1
@@ -127,12 +230,17 @@ function createAssistantFallbackItem(text: string) {
 export async function buildAgentApiInput(options: BuildAgentApiInputOptions): Promise<unknown[]> {
   const input: unknown[] = []
   const rounds = getAgentRoundPath(options.conversation, options.currentRound.id)
+  const candidates = getAgentImageCandidates(options.conversation, options.currentRound, options.tasks)
+  const selectedImages = (await selectAgentImages(
+    [...candidates.workflow, ...candidates.historical],
+    options.loadImage,
+  )).selected
 
   for (const round of rounds) {
     const userMessage = options.conversation.messages.find((message) => message.id === round.userMessageId)
     if (!userMessage) continue
 
-    input.push(await createUserInputItem(options.conversation, round, userMessage, options.tasks, options.loadImage))
+    input.push(createUserInputItem(options.conversation, round, userMessage, options.tasks, selectedImages))
     if (round.id === options.currentRound.id) continue
 
     const output = getAgentRoundResponseOutput(round, options.tasks)
@@ -154,7 +262,7 @@ export async function buildAgentApiInput(options: BuildAgentApiInputOptions): Pr
     }
 
     if (round.outputTaskIds.length > 0) {
-      const imagesItem = await createGeneratedImagesInputItem(round, options.tasks, options.loadImage)
+      const imagesItem = createGeneratedImagesInputItem(round, options.tasks, selectedImages)
       if (imagesItem) input.push(imagesItem)
     }
   }
@@ -169,12 +277,48 @@ export async function buildAgentContinuationInput(options: BuildAgentContinuatio
   const currentRoundOutput = options.currentRoundOutput.filter(
     (item) => item.type !== 'function_call_output' || !item.call_id || !functionCallOutputIds.has(item.call_id),
   )
+  const candidates = getAgentImageCandidates(options.conversation, options.currentRound, options.tasks)
+  const workflowImages = await selectAgentImages(candidates.workflow, options.loadImage)
+
+  let selectedBatchImages = new Map<string, string>()
+  let selectedBytes = workflowImages.bytes
+  const allowedDataUrls = new Set(workflowImages.dataUrls)
+  const batchCandidates: AgentImageCandidate[] = []
+  let batchImageIndex = 0
+  for (const taskId of options.currentRound.outputTaskIds) {
+    const task = options.tasks.find((item) => item.id === taskId)
+    if (!task) {
+      batchImageIndex += 1
+      continue
+    }
+    for (const imageId of task.outputImages) {
+      if (options.batchTaskIds.includes(taskId) && task.status === 'done') {
+        batchCandidates.push({ imageId, referenceId: getAgentGeneratedImageReferenceId(options.currentRound, batchImageIndex) })
+      }
+      batchImageIndex += 1
+    }
+  }
+  if (batchCandidates.length > 0) {
+    const batchImages = await selectAgentImages(batchCandidates, options.loadImage, selectedBytes, workflowImages.imageIds, allowedDataUrls)
+    selectedBatchImages = batchImages.selected
+    selectedBytes = batchImages.bytes
+    for (const dataUrl of batchImages.dataUrls) allowedDataUrls.add(dataUrl)
+  }
+
+  for (const dataUrl of getInputImageDataUrls(options.baseInput)) {
+    if (allowedDataUrls.has(dataUrl)) continue
+    const nextBytes = selectedBytes + getDataUrlByteLength(dataUrl)
+    if (nextBytes > AGENT_IMAGE_CONTEXT_MAX_BYTES) continue
+    allowedDataUrls.add(dataUrl)
+    selectedBytes = nextBytes
+  }
+
   const input = [
-    ...options.baseInput,
+    ...filterInputImages(options.baseInput, allowedDataUrls),
     ...sanitizeResponseOutputForInput(currentRoundOutput, { allowPendingFunctionCalls: true }),
     ...(options.functionCallOutputs ?? []),
   ]
-  const batchImagesItem = await createBatchImagesInputItem(options.currentRound, options.tasks, options.batchTaskIds, options.loadImage)
+  const batchImagesItem = createBatchImagesInputItem(options.currentRound, options.tasks, options.batchTaskIds, selectedBatchImages)
   if (batchImagesItem) input.push(batchImagesItem)
 
   const newImageRefs = collectAgentRoundOutputImageSlots(options.currentRound, options.tasks)

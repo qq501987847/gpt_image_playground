@@ -50,7 +50,7 @@ import {
   storeImageWithSize,
 } from './lib/db'
 import { callImageApi } from './lib/api'
-import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
+import { callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { AGENT_SKILL_PLAN_FUNCTION_NAME, getAgentSkillBaseItemId, getAgentSkillPlanStageError, getAgentSkillSession, parseAgentSkillPlanCall, selectAgentSkillPlanGroups } from './lib/agentSkills'
 import { buildAgentApiInput, buildAgentContinuationInput } from './lib/agentInputBuilder'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId } from './lib/agentImageReferences'
@@ -64,7 +64,7 @@ import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompati
 import { getModelParamsKey, normalizeParamsForModel } from './lib/modelCapabilities'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
-import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureImageCached, scheduleThumbnailBackfill } from './lib/imageCache'
+import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureAgentObservationImageCached, ensureImageCached, scheduleThumbnailBackfill } from './lib/imageCache'
 import { hasActiveDataOperations } from './lib/dataOperations'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, createExportBlob, getExportImageEstimatedBytes, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
@@ -334,7 +334,6 @@ interface AppState {
   agentMobileHeaderVisible: boolean
   agentEditingRoundId: string | null
   agentEditingConversationId: string | null
-  agentGeneratingTitleIds: Record<string, true>
   createAgentConversation: () => string
   setActiveAgentConversationId: (id: string | null) => void
   setActiveAgentRoundId: (conversationId: string, roundId: string | null) => void
@@ -739,7 +738,6 @@ export const useStore = create<AppState>()(
       agentMobileHeaderVisible: false,
       agentEditingRoundId: null,
       agentEditingConversationId: null,
-      agentGeneratingTitleIds: {},
       createAgentConversation: () => {
         const now = Date.now()
         const latestConversation = getLatestAgentConversation(get().agentConversations)
@@ -1888,44 +1886,6 @@ function appendAgentAssistantMessageContent(conversationId: string, messageId: s
   }))
 }
 
-async function generateAgentConversationTitle(
-  conversationId: string,
-  prompt: string,
-  inputImageIds: string[],
-  requestSettings: AppSettings,
-  activeProfile: ApiProfile,
-  fallbackTitle: string,
-) {
-  useStore.setState((state) => {
-    const next = { ...state.agentGeneratingTitleIds, [conversationId]: true as const }
-    return { agentGeneratingTitleIds: next }
-  })
-  try {
-    const imageDataUrls = await readAgentImageDataUrls(inputImageIds)
-    const title = await callAgentConversationTitleApi({
-      settings: requestSettings,
-      profile: activeProfile,
-      prompt,
-      imageDataUrls,
-    })
-    if (!title || title === fallbackTitle) return
-
-    updateAgentConversation(conversationId, (current) => {
-      const firstRound = current.rounds[0]
-      if (!firstRound || firstRound.prompt !== prompt || current.title !== fallbackTitle) return current
-      return { ...current, title, updatedAt: Date.now() }
-    })
-  } catch {
-    // Title generation is best-effort; keep the local fallback title on failure.
-  } finally {
-    useStore.setState((state) => {
-      const next = { ...state.agentGeneratingTitleIds }
-      delete next[conversationId]
-      return { agentGeneratingTitleIds: next }
-    })
-  }
-}
-
 export function stopAgentResponse(conversationId = useStore.getState().activeAgentConversationId) {
   if (!conversationId) return
   const conversation = useStore.getState().agentConversations.find((item) => item.id === conversationId)
@@ -2071,15 +2031,6 @@ async function persistTaskStreamPartialImage(taskId: string, dataUrl: string) {
   } catch (err) {
     console.error(err)
   }
-}
-
-async function readAgentImageDataUrls(ids: string[]) {
-  const dataUrls: string[] = []
-  for (const id of ids) {
-    const dataUrl = await ensureImageCached(id)
-    if (dataUrl) dataUrls.push(dataUrl)
-  }
-  return dataUrls
 }
 
 function scrubAgentOutputPayloadsForDeletedTasks(deletedTasks: TaskRecord[]) {
@@ -2376,10 +2327,8 @@ export async function submitAgentMessage() {
     createdAt: now,
   }
 
-  let fallbackTitle: string | null = null
   updateAgentConversation(conversation.id, (current) => {
     const nextTitle = current.rounds.length === 0 ? createAgentConversationTitle(trimmedPrompt, current.title) : current.title
-    if (current.rounds.length === 0) fallbackTitle = nextTitle
     const messages = shouldAppendToEditingRound
       ? current.messages.some((message) => message.id === userMessageId)
         ? current.messages.map((message) => {
@@ -2409,10 +2358,6 @@ export async function submitAgentMessage() {
   state.clearInputImages()
   state.clearMaskDraft()
   state.setAgentEditingRoundId(null)
-
-  if (fallbackTitle) {
-    void generateAgentConversationTitle(conversation.id, trimmedPrompt, inputImageIds, requestSettings, activeProfile, fallbackTitle)
-  }
 
   void executeAgentRound(conversation.id, roundId, normalizedParams, requestSettings, activeProfile, imageProfile)
 }
@@ -2719,7 +2664,7 @@ async function executeAgentRound(
       conversation,
       currentRound: round,
       tasks: latestState.tasks,
-      loadImage: ensureImageCached,
+      loadImage: ensureAgentObservationImageCached,
     })
     if (controller.signal.aborted) throw createAgentAbortError()
     const existingAssistantMessage = round.assistantMessageId
@@ -2968,13 +2913,14 @@ async function executeAgentRound(
       const resumeState = useStore.getState()
       apiInputForTurn = await buildAgentContinuationInput({
         baseInput: apiInput,
+        conversation,
         currentRound: round,
         tasks: resumeState.tasks,
         currentRoundOutput: accumulatedOutputItems,
         batchTaskIds: resume.recoveredTaskIds,
         toolCallsUsed,
         maxToolCalls,
-        loadImage: ensureImageCached,
+        loadImage: ensureAgentObservationImageCached,
         continuationOnly: resume.continuationOnly,
       })
     }
@@ -3632,10 +3578,11 @@ async function executeAgentRound(
       const continuationState = useStore.getState()
       const latestConversation = continuationState.agentConversations.find((item) => item.id === conversationId)
       const latestRound = latestConversation?.rounds.find((item) => item.id === roundId)
-      if (!latestRound) break
+      if (!latestConversation || !latestRound) break
 
       apiInputForTurn = await buildAgentContinuationInput({
         baseInput: apiInput,
+        conversation: latestConversation,
         currentRound: latestRound,
         tasks: continuationState.tasks,
         currentRoundOutput: accumulatedOutputItemsWithFunctionOutputs,
@@ -3643,7 +3590,7 @@ async function executeAgentRound(
         batchTaskIds: streamingTaskIds,
         toolCallsUsed,
         maxToolCalls,
-        loadImage: ensureImageCached,
+        loadImage: ensureAgentObservationImageCached,
         continuationOnly: resume?.continuationOnly,
       })
       accumulatedOutputItems = accumulatedOutputItemsWithFunctionOutputs

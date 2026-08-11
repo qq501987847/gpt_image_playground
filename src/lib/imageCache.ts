@@ -4,6 +4,7 @@ import {
   getImageThumbnail,
   getStoredFreshImageThumbnail,
 } from './db'
+import { createAgentObservationImage } from './agentObservationImage'
 
 type ImageThumbnail = {
   dataUrl: string
@@ -13,6 +14,7 @@ type ImageThumbnail = {
 }
 
 const imageCache = new Map<string, string>()
+const agentObservationCache = new Map<string, string>()
 const thumbnailCache = new Map<string, ImageThumbnail>()
 const thumbnailBackfillIds = new Map<string, 'visible' | 'background'>()
 const thumbnailBackfillRunningIds = new Set<string>()
@@ -20,6 +22,7 @@ const thumbnailSubscribers = new Map<string, Set<(thumbnail: ImageThumbnail) => 
 let thumbnailBackfillScheduled = false
 
 const MAX_IMAGE_CACHE_ENTRIES = 8
+const MAX_AGENT_OBSERVATION_CACHE_ENTRIES = 8
 const MAX_THUMBNAIL_CACHE_ENTRIES = 80
 const MAX_THUMBNAIL_BACKFILL_CONCURRENT = 4
 
@@ -70,6 +73,7 @@ export function cacheThumbnail(id: string, thumbnail: ImageThumbnail) {
 
 export function deleteImageCacheEntry(id: string) {
   imageCache.delete(id)
+  agentObservationCache.delete(id)
   thumbnailCache.delete(id)
   thumbnailBackfillIds.delete(id)
   thumbnailBackfillRunningIds.delete(id)
@@ -78,6 +82,7 @@ export function deleteImageCacheEntry(id: string) {
 
 export function clearImageCaches() {
   imageCache.clear()
+  agentObservationCache.clear()
   thumbnailCache.clear()
   thumbnailBackfillIds.clear()
 }
@@ -91,6 +96,38 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
     return rec.dataUrl
   }
   return undefined
+}
+
+export async function ensureAgentObservationImageCached(id: string): Promise<string | undefined> {
+  const cached = agentObservationCache.get(id)
+  if (cached) {
+    agentObservationCache.delete(id)
+    agentObservationCache.set(id, cached)
+    return cached
+  }
+
+  const original = await ensureImageCached(id)
+  if (!original) return undefined
+
+  let observation = original
+  try {
+    observation = await createAgentObservationImage(original)
+  } catch (err) {
+    console.warn('Agent 参考图处理失败，改用已有缩略图', err)
+    try {
+      observation = (await getImageThumbnail(id))?.thumbnailDataUrl || original
+    } catch (thumbnailErr) {
+      console.warn('Agent 参考图缩略图读取失败，改用原图', thumbnailErr)
+    }
+  }
+
+  agentObservationCache.set(id, observation)
+  while (agentObservationCache.size > MAX_AGENT_OBSERVATION_CACHE_ENTRIES) {
+    const oldestKey = agentObservationCache.keys().next().value
+    if (oldestKey == null) break
+    agentObservationCache.delete(oldestKey)
+  }
+  return observation
 }
 
 export async function ensureImageThumbnailCached(id: string): Promise<ImageThumbnail | undefined> {

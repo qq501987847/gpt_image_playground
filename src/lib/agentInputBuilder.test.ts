@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentConversation, AgentMessage, AgentRound, TaskRecord } from '../types'
 import { DEFAULT_PARAMS } from '../types'
+import { getDataUrlByteLength } from './agentObservationImage'
 import { getSelectedImageMentionLabel } from './promptImageMentions'
 import { buildAgentApiInput, buildAgentContinuationInput } from './agentInputBuilder'
 
@@ -61,6 +62,21 @@ function conversation(rounds: AgentRound[], messages: AgentMessage[]): AgentConv
 }
 
 const noImage = async () => undefined
+const TWO_MIB_IMAGE_BYTES = 2 * 1024 * 1024 - 16
+
+function sizedDataUrl(name: string, bytes = TWO_MIB_IMAGE_BYTES) {
+  return `data:image/png;name=${name};base64,${'a'.repeat(Math.ceil(bytes / 3) * 4)}`
+}
+
+function getInputImageUrls(input: unknown[]) {
+  return input.flatMap((item) => {
+    if (!item || typeof item !== 'object' || !('content' in item) || !Array.isArray(item.content)) return []
+    return item.content.flatMap((part) => {
+      if (!part || typeof part !== 'object' || !('type' in part) || part.type !== 'input_image' || !('image_url' in part) || typeof part.image_url !== 'string') return []
+      return [part.image_url]
+    })
+  })
+}
 
 describe('agent input builder', () => {
   it('builds a normal current-round user input', async () => {
@@ -148,6 +164,90 @@ describe('agent input builder', () => {
     expect(serialized).not.toContain('input_image')
   })
 
+  it('keeps current-round images within the total context budget and leaves overflow refs declared', async () => {
+    const ids = ['image-a', 'image-b', 'image-c', 'image-d', 'image-e']
+    const urls = new Map(ids.map((id) => [id, sizedDataUrl(id)]))
+    const currentRound = round('round-1', 1, { inputImageIds: ids, status: 'running', finishedAt: null })
+
+    const input = await buildAgentApiInput({
+      conversation: conversation([currentRound], [message(currentRound, '比较这些参考图')]),
+      currentRound,
+      tasks: [],
+      loadImage: async (id) => urls.get(id),
+    })
+    const imageUrls = getInputImageUrls(input)
+    const serialized = JSON.stringify(input)
+
+    expect(imageUrls).toHaveLength(4)
+    expect(imageUrls.reduce((bytes, dataUrl) => bytes + getDataUrlByteLength(dataUrl), 0)).toBeLessThanOrEqual(8 * 1024 * 1024)
+    expect(serialized).toContain('round-1-reference-5')
+    expect(serialized).not.toContain('name=image-e')
+  })
+
+  it('does not send duplicate image data for repeated references', async () => {
+    const currentRound = round('round-1', 1, { inputImageIds: ['image-a', 'image-b'], status: 'running', finishedAt: null })
+
+    const input = await buildAgentApiInput({
+      conversation: conversation([currentRound], [message(currentRound, '比较两张图')]),
+      currentRound,
+      tasks: [],
+      loadImage: async () => 'data:same-image',
+    })
+    const serialized = JSON.stringify(input)
+
+    expect(getInputImageUrls(input)).toEqual(['data:same-image'])
+    expect(serialized).toContain('round-1-reference-1')
+    expect(serialized).toContain('round-1-reference-2')
+  })
+
+  it('keeps unreferenced historical image refs without loading their data', async () => {
+    const previous = round('round-1', 1, { outputTaskIds: ['history-task'] })
+    const currentRound = round('round-2', 2, { parentRoundId: previous.id, status: 'running', finishedAt: null })
+    const loadImage = vi.fn(async () => 'data:history-image')
+
+    const input = await buildAgentApiInput({
+      conversation: conversation([previous, currentRound], [message(previous, '生成图片'), message(currentRound, '继续调整')]),
+      currentRound,
+      tasks: [task('history-task', { outputImages: ['history-image'] })],
+      loadImage,
+    })
+
+    expect(loadImage).not.toHaveBeenCalled()
+    expect(getInputImageUrls(input)).toEqual([])
+    expect(JSON.stringify(input)).toContain('round-1-image-1')
+  })
+
+  it('keeps approved skill source images as current workflow context', async () => {
+    const source = round('round-1', 1, { inputImageIds: ['product-image'], assistantMessageId: 'assistant-1' })
+    const currentRound = round('round-2', 2, { parentRoundId: source.id, status: 'running', finishedAt: null })
+    const skillConversation: AgentConversation = {
+      ...conversation([source, currentRound], [
+        message(source, '为这款商品规划一套图片'),
+        message(source, '方案待确认', { id: 'assistant-1', role: 'assistant' }),
+        message(currentRound, '已确认方案，开始生成'),
+      ]),
+      skillId: 'ecom-details-image',
+      skillMode: 'full',
+      skillPlan: {
+        skillId: 'ecom-details-image',
+        title: '商品图方案',
+        styleLock: '保持商品一致',
+        groups: [],
+        sourceRoundId: source.id,
+        status: 'approved',
+      },
+    }
+
+    const input = await buildAgentApiInput({
+      conversation: skillConversation,
+      currentRound,
+      tasks: [],
+      loadImage: async (id) => id === 'product-image' ? 'data:product-image' : undefined,
+    })
+
+    expect(getInputImageUrls(input)).toEqual(['data:product-image'])
+  })
+
   it('propagates image loading failures', async () => {
     const currentRound = round('round-1', 1, { inputImageIds: ['broken-image'], status: 'running', finishedAt: null })
 
@@ -161,7 +261,7 @@ describe('agent input builder', () => {
     })).rejects.toThrow('image read failed')
   })
 
-  it('restores historical output from a legacy task payload and stored generated image', async () => {
+  it('restores explicitly referenced historical output from a legacy task payload and stored generated image', async () => {
     const previous = round('round-1', 1, { outputTaskIds: ['legacy-task'], assistantMessageId: 'assistant-1' })
     const currentRound = round('round-2', 2, { parentRoundId: previous.id, status: 'running', finishedAt: null })
     const legacyTask = task('legacy-task', {
@@ -179,7 +279,7 @@ describe('agent input builder', () => {
       conversation: conversation([previous, currentRound], [
         message(previous, '历史请求'),
         message(previous, '历史回复', { id: 'assistant-1', role: 'assistant' }),
-        message(currentRound, '继续'),
+        message(currentRound, '参考 @第1轮图1 继续'),
       ]),
       currentRound,
       tasks: [legacyTask],
@@ -259,7 +359,7 @@ describe('agent input builder', () => {
     const currentRound = round('round-2', 2, { parentRoundId: previous.id, status: 'running', finishedAt: null })
 
     const input = await buildAgentApiInput({
-      conversation: conversation([previous, currentRound], [message(previous, '生成'), message(currentRound, '继续')]),
+      conversation: conversation([previous, currentRound], [message(previous, '生成'), message(currentRound, '参考 @第1轮图2 继续')]),
       currentRound,
       tasks: [task('live-task', { outputImages: ['live-image'] })],
       loadImage: async (id) => id === 'live-image' ? 'data:live-image' : undefined,
@@ -294,7 +394,6 @@ describe('agent input builder', () => {
       {
         role: 'user',
         content: [
-          { type: 'input_image', image_url: 'data:legacy-image' },
           { type: 'input_text', text: '<ref id="round-1-image-1" />' },
         ],
       },
@@ -321,13 +420,14 @@ describe('agent input builder', () => {
       task('batch-done', { prompt: '批量图', outputImages: ['batch-image'], agentBatchCallId: 'batch-call' }),
       task('batch-running', { status: 'running', outputImages: ['partial-image'], agentBatchCallId: 'batch-call' }),
     ]
+    const currentConversation = conversation([first, sibling, currentRound], [
+      message(first, '生成基础'),
+      message(first, '消息中的回退回复', { id: 'assistant-1', role: 'assistant' }),
+      message(sibling, '分支 A'),
+      message(currentRound, '分支 B 批量继续，参考 @第1轮图1'),
+    ])
     const baseInput = await buildAgentApiInput({
-      conversation: conversation([first, sibling, currentRound], [
-        message(first, '生成基础'),
-        message(first, '消息中的回退回复', { id: 'assistant-1', role: 'assistant' }),
-        message(sibling, '分支 A'),
-        message(currentRound, '分支 B 批量继续'),
-      ]),
+      conversation: currentConversation,
       currentRound,
       tasks,
       loadImage: async (id) => `data:${id}`,
@@ -346,6 +446,7 @@ describe('agent input builder', () => {
 
     const input = await buildAgentContinuationInput({
       baseInput,
+      conversation: currentConversation,
       currentRound,
       tasks,
       currentRoundOutput: [functionCall],
@@ -366,7 +467,7 @@ describe('agent input builder', () => {
           { type: 'input_text', text: '<ref id="round-1-image-1" prompt="基础图" />' },
         ],
       },
-      { role: 'user', content: [{ type: 'input_text', text: '分支 B 批量继续' }] },
+      { role: 'user', content: [{ type: 'input_text', text: '分支 B 批量继续，参考 <ref id="round-1-image-1" />' }] },
       functionCall,
       functionOutput,
       {
@@ -398,6 +499,7 @@ describe('agent input builder', () => {
 
     const input = await buildAgentContinuationInput({
       baseInput: [{ role: 'user', content: [{ type: 'input_text', text: '开始' }] }],
+      conversation: conversation([currentRound], [message(currentRound, '开始')]),
       currentRound,
       tasks: [],
       currentRoundOutput: [
@@ -422,5 +524,59 @@ describe('agent input builder', () => {
     expect(serialized).not.toContain('stale')
     expect(input[input.length - 2]).toEqual(functionOutput)
     expect(JSON.stringify(input[input.length - 1])).toContain('Tool-call budget: 2/2 used.')
+  })
+
+  it('prioritizes current inputs and new tool images over historical images on continuation', async () => {
+    const previous = round('round-1', 1, { outputTaskIds: ['history-task'], assistantMessageId: 'assistant-1' })
+    const currentRound = round('round-2', 2, {
+      parentRoundId: previous.id,
+      inputImageIds: ['current-a', 'current-b', 'current-c'],
+      outputTaskIds: ['batch-task'],
+      status: 'running',
+      finishedAt: null,
+    })
+    const historyUrl = sizedDataUrl('history')
+    const batchUrl = sizedDataUrl('batch')
+    const urls = new Map([
+      ['current-a', sizedDataUrl('current-a')],
+      ['current-b', sizedDataUrl('current-b')],
+      ['current-c', sizedDataUrl('current-c')],
+      ['history-image', historyUrl],
+      ['batch-image', batchUrl],
+    ])
+    const tasks = [
+      task('history-task', { outputImages: ['history-image'] }),
+      task('batch-task', { outputImages: ['batch-image'], agentBatchCallId: 'batch-call' }),
+    ]
+    const currentConversation = conversation([previous, currentRound], [
+      message(previous, '生成基础图'),
+      message(previous, '基础图已完成', { id: 'assistant-1', role: 'assistant' }),
+      message(currentRound, '参考 @第1轮图1 继续生成'),
+    ])
+    const loadImage = async (id: string) => urls.get(id)
+    const baseInput = await buildAgentApiInput({
+      conversation: currentConversation,
+      currentRound,
+      tasks,
+      loadImage,
+    })
+
+    const input = await buildAgentContinuationInput({
+      baseInput,
+      conversation: currentConversation,
+      currentRound,
+      tasks,
+      currentRoundOutput: [],
+      batchTaskIds: ['batch-task'],
+      toolCallsUsed: 1,
+      maxToolCalls: 3,
+      loadImage,
+    })
+    const imageUrls = getInputImageUrls(input)
+
+    expect(imageUrls).toEqual([urls.get('current-a'), urls.get('current-b'), urls.get('current-c'), batchUrl])
+    expect(imageUrls).not.toContain(historyUrl)
+    expect(imageUrls.reduce((bytes, dataUrl) => bytes + getDataUrlByteLength(dataUrl), 0)).toBeLessThanOrEqual(8 * 1024 * 1024)
+    expect(JSON.stringify(input)).toContain('round-1-image-1')
   })
 })

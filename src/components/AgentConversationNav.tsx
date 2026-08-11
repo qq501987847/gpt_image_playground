@@ -6,7 +6,6 @@ import { CloseIcon, EditIcon, PlusIcon, SidebarLeftIcon, TrashIcon } from './ico
 interface AgentConversationNavProps {
   conversations: AgentConversation[]
   activeConversationId: string | null
-  generatingTitleIds: Record<string, true>
   mobile?: boolean
   onClose: () => void
   onCreate: () => void
@@ -29,7 +28,6 @@ function getConversationStatus(conversation: AgentConversation) {
 export default function AgentConversationNav({
   conversations,
   activeConversationId,
-  generatingTitleIds,
   mobile = false,
   onClose,
   onCreate,
@@ -48,7 +46,7 @@ export default function AgentConversationNav({
   }, [conversations, query])
 
   const confirmRename = () => {
-    if (editingId && title.trim() && !generatingTitleIds[editingId]) onRename(editingId, title.trim())
+    if (editingId && title.trim()) onRename(editingId, title.trim())
     setEditingId(null)
   }
 
@@ -89,7 +87,7 @@ export default function AgentConversationNav({
               <div className={`relative shrink-0 ${actionsVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
                 <button type="button" onClick={() => setActionsId((current) => current === item.id ? null : item.id)} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 transition-[transform,background-color,color,opacity] hover:bg-gray-200 hover:text-gray-700 active:scale-[0.96] dark:hover:bg-white/[0.1] dark:hover:text-gray-200" aria-label={`${item.title} 操作`} aria-expanded={actionsId === item.id}>...</button>
                 {actionsId === item.id && <div className="absolute right-0 top-10 z-20 w-28 rounded-lg border border-gray-200 bg-white p-1 shadow-xl dark:border-white/[0.08] dark:bg-gray-900">
-                  <button type="button" disabled={Boolean(generatingTitleIds[item.id])} onClick={() => { setEditingId(item.id); setTitle(item.title); setActionsId(null) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:text-gray-200 dark:hover:bg-white/[0.06]"><EditIcon className="h-4 w-4" />重命名</button>
+                  <button type="button" onClick={() => { setEditingId(item.id); setTitle(item.title); setActionsId(null) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/[0.06]"><EditIcon className="h-4 w-4" />重命名</button>
                   <button type="button" disabled={running} onClick={() => { setActionsId(null); onDelete(item.id) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-500/10" title={running ? '请先停止生成' : undefined}><TrashIcon className="h-4 w-4" />{running ? '先停止生成' : '删除'}</button>
                 </div>}
               </div>

@@ -6,14 +6,19 @@ const db = vi.hoisted(() => ({
   getImageThumbnail: vi.fn(),
   getStoredFreshImageThumbnail: vi.fn(),
 }))
+const observation = vi.hoisted(() => ({
+  createAgentObservationImage: vi.fn(),
+}))
 
 vi.mock('./db', () => db)
+vi.mock('./agentObservationImage', () => observation)
 
 import {
   cacheImage,
   cacheThumbnail,
   clearImageCaches,
   deleteImageCacheEntry,
+  ensureAgentObservationImageCached,
   ensureImageThumbnailCached,
   getCachedImage,
   scheduleThumbnailBackfill,
@@ -27,6 +32,7 @@ describe('imageCache', () => {
     db.getImage.mockResolvedValue(undefined)
     db.getImageThumbnail.mockResolvedValue(undefined)
     db.getStoredFreshImageThumbnail.mockResolvedValue(undefined)
+    observation.createAgentObservationImage.mockImplementation(async (dataUrl: string) => dataUrl)
   })
 
   afterEach(() => {
@@ -121,6 +127,27 @@ describe('imageCache', () => {
       dataUrl: 'stored-cleared-thumbnail',
     })
     expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledWith('cleared')
+  })
+
+  it('caches a separate Agent observation image without replacing the original', async () => {
+    db.getImage.mockResolvedValue({ id: 'large', dataUrl: 'original-4k' })
+    observation.createAgentObservationImage.mockResolvedValue('observation-2k')
+
+    await expect(ensureAgentObservationImageCached('large')).resolves.toBe('observation-2k')
+    await expect(ensureAgentObservationImageCached('large')).resolves.toBe('observation-2k')
+
+    expect(observation.createAgentObservationImage).toHaveBeenCalledOnce()
+    expect(observation.createAgentObservationImage).toHaveBeenCalledWith('original-4k')
+    expect(getCachedImage('large')).toBe('original-4k')
+  })
+
+  it('falls back to the stored thumbnail when Agent observation processing fails', async () => {
+    db.getImage.mockResolvedValue({ id: 'broken', dataUrl: 'original-broken' })
+    db.getImageThumbnail.mockResolvedValue({ id: 'broken', thumbnailDataUrl: 'thumbnail-720' })
+    observation.createAgentObservationImage.mockRejectedValue(new Error('decode failed'))
+
+    await expect(ensureAgentObservationImageCached('broken')).resolves.toBe('thumbnail-720')
+    expect(getCachedImage('broken')).toBe('original-broken')
   })
 
   it('prioritizes visible thumbnail backfills and notifies subscribers', async () => {

@@ -92,7 +92,6 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef }: History
   const confirmDialogOpen = useStore((s) => Boolean(s.confirmDialog))
   const setAppMode = useStore((s) => s.setAppMode)
   const tasks = useStore((s) => s.tasks)
-  const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
   const editingId = useStore((s) => s.agentEditingConversationId)
   const setEditingId = useStore((s) => s.setAgentEditingConversationId)
 
@@ -132,13 +131,12 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef }: History
 
   const startRename = (e: React.MouseEvent, id: string, currentTitle: string) => {
     e.stopPropagation()
-    if (agentGeneratingTitleIds[id]) return
     setEditingId(id)
     setEditingTitle(currentTitle)
   }
 
   const confirmRename = () => {
-    if (editingId && editingTitle.trim() && !agentGeneratingTitleIds[editingId]) {
+    if (editingId && editingTitle.trim()) {
       renameConversation(editingId, editingTitle.trim())
     }
     setEditingId(null)
@@ -287,7 +285,6 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef }: History
                         tooltip="重命名"
                         onClick={(e) => startRename(e, c.id, c.title)}
                         className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-white disabled:text-gray-300 disabled:hover:text-gray-300 dark:disabled:text-gray-600 dark:disabled:hover:text-gray-600 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
-                        disabled={Boolean(agentGeneratingTitleIds[c.id])}
                       >
                         <EditIcon className="w-3.5 h-3.5" />
                       </HistoryActionButton>

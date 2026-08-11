@@ -94,16 +94,6 @@ function createAgentInstructions(settings: AppSettings, codexCliSize?: string, a
   return instructions.join('\n')
 }
 
-const AGENT_TITLE_INSTRUCTIONS = [
-  'Generate a concise conversation title from the first user message.',
-  'Output exactly one XML element in this form: <title>short title</title>',
-  'Do not output markdown, code fences, explanations, attributes, or additional XML elements.',
-  'Use the main language of the user message. Chinese titles should be no more than 12 characters. English titles should be no more than 5 words.',
-  'Escape XML special characters when necessary.',
-].join('\n')
-
-const AGENT_TITLE_MAX_LENGTH = 28
-
 function createHeaders(profile: ApiProfile): Record<string, string> {
   return {
     Authorization: `Bearer ${profile.apiKey}`,
@@ -364,29 +354,6 @@ function extractText(payload: ResponsesApiResponse) {
   }
 
   return chunks.join('\n').trim()
-}
-
-function decodeXmlText(text: string) {
-  return text.replace(/&(?:#(\d+)|#x([\da-fA-F]+)|amp|lt|gt|quot|apos);/g, (entity, decimal: string | undefined, hex: string | undefined) => {
-    if (decimal) return String.fromCodePoint(Number(decimal))
-    if (hex) return String.fromCodePoint(Number.parseInt(hex, 16))
-    switch (entity) {
-      case '&amp;': return '&'
-      case '&lt;': return '<'
-      case '&gt;': return '>'
-      case '&quot;': return '"'
-      case '&apos;': return "'"
-      default: return entity
-    }
-  })
-}
-
-function parseAgentConversationTitleXml(text: string) {
-  const match = text.match(/<title>([\s\S]*?)<\/title>/i)
-  const title = match ? decodeXmlText(match[1]).trim() : ''
-  const chars = Array.from(title)
-  if (chars.length <= AGENT_TITLE_MAX_LENGTH) return title
-  return `${chars.slice(0, AGENT_TITLE_MAX_LENGTH - 3).join('')}...`
 }
 
 function extractImages(payload: ResponsesApiResponse, fallbackMime: string): AgentApiResultImage[] {
@@ -667,58 +634,6 @@ export async function callAgentResponsesApi(opts: {
       outputItems: payload.output,
       rawResponsePayload: JSON.stringify(payload, null, 2),
     }
-  } finally {
-    clearTimeout(timeoutId)
-    signal?.removeEventListener('abort', abortFromCaller)
-  }
-}
-
-export async function callAgentConversationTitleApi(opts: {
-  settings: AppSettings
-  profile: ApiProfile
-  prompt: string
-  imageDataUrls?: string[]
-  signal?: AbortSignal
-}): Promise<string> {
-  const { settings, profile, prompt, imageDataUrls, signal } = opts
-  const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
-  const abortFromCaller = () => controller.abort()
-  if (signal?.aborted) controller.abort()
-  signal?.addEventListener('abort', abortFromCaller, { once: true })
-
-  try {
-    const content: Array<Record<string, string>> = [
-      { type: 'input_text', text: `The following is the first message the user sent in a conversation. Generate a title for this conversation.\n\n${prompt}` },
-    ]
-    for (const dataUrl of imageDataUrls ?? []) {
-      content.push({ type: 'input_image', image_url: dataUrl })
-    }
-
-    const body: Record<string, unknown> = {
-      model: profile.model || settings.model,
-      instructions: AGENT_TITLE_INSTRUCTIONS,
-      input: [{ role: 'user', content }],
-    }
-    if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
-
-    const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
-      method: 'POST',
-      headers: createHeaders(profile),
-      cache: 'no-store',
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error(await getApiErrorMessage(response))
-    }
-
-    const payload = normalizeResponsePayload(await response.json())
-    if (!payload) throw new Error('Agent 标题接口返回格式无效')
-    return parseAgentConversationTitleXml(extractText(payload))
   } finally {
     clearTimeout(timeoutId)
     signal?.removeEventListener('abort', abortFromCaller)
