@@ -5,6 +5,7 @@ import { getAgentImageApiProfile, getAgentTextApiProfile } from '../../lib/apiPr
 import { filterDiscoveredModels } from '../../lib/modelCapabilities'
 import { getSub2ApiKeyLabel, isSub2ApiKeyUsable } from '../../lib/sub2api'
 import { discoverModelsForKey, useSub2ApiSession } from '../../lib/sub2apiSession'
+import ModelBrandIcon from '../modelBrandIcon'
 
 interface AgentModelSelectorProps {
   open: boolean
@@ -136,25 +137,25 @@ export default function AgentModelSelector({ open, onOpenChange }: AgentModelSel
       <button
         type="button"
         onClick={() => toggle(buttonKind)}
-        className={`relative z-50 flex h-10 min-w-0 flex-1 items-center gap-1 rounded-xl border px-2 text-left text-[10px] outline-none transition-[transform,background-color,border-color] focus-visible:ring-2 focus-visible:ring-blue-400/50 active:scale-[0.96] sm:text-xs ${open && kind === buttonKind ? 'border-blue-300 bg-blue-50/80 text-blue-700 dark:border-blue-400/30 dark:bg-blue-500/10 dark:text-blue-300' : 'border-gray-200/60 bg-white/50 text-gray-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400'}`}
+        className={`relative z-50 flex h-10 min-w-0 flex-1 items-center gap-1 rounded-xl border px-2 text-left text-[10px] outline-none transition-[transform,background-color,border-color] focus-visible:ring-2 focus-visible:ring-blue-400/50 active:scale-[0.96] sm:max-w-56 sm:flex-initial sm:text-xs ${open && kind === buttonKind ? 'border-blue-300 bg-blue-50/80 text-blue-700 dark:border-blue-400/30 dark:bg-blue-500/10 dark:text-blue-300' : 'border-gray-200/60 bg-white/50 text-gray-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400'}`}
         aria-expanded={open && kind === buttonKind}
         aria-label={`切换${label}模型。模型：${model}；分组：${group}`}
         title={`${label}模型：${model} · 分组：${group}`}
       >
-        <strong className="shrink-0 font-medium text-gray-700 dark:text-gray-200">{label}</strong>
+        <ModelBrandIcon model={model} />
         <span className="min-w-0 truncate">{model}</span>
       </button>
     )
   }
 
   return (
-    <div className="relative flex min-w-0 max-w-lg flex-1 items-center gap-1">
+    <div className="relative flex min-w-0 max-w-lg flex-1 items-center gap-1 sm:flex-initial">
       {renderButton('text', textGroup, textProfile?.model || '未配置')}
       {renderButton('image', imageGroup, imageProfile?.model || '未配置')}
 
       {open && kind && <>
         <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="关闭 Agent 模型菜单" onClick={() => { setKind(null); onOpenChange(false) }} />
-        <section className="absolute bottom-full -left-[3.25rem] z-50 mb-2 grid w-[calc(100vw-2rem)] max-w-[34rem] grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-white/[0.08] dark:bg-gray-900 sm:left-0">
+        <section className="absolute bottom-full -right-[7.75rem] z-50 mb-2 grid w-[calc(100vw-2rem)] max-w-[34rem] grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-white/[0.08] dark:bg-gray-900 sm:left-0 sm:right-auto">
           {session.status !== 'ready' ? (
             <p className="col-span-2 p-3 text-xs text-amber-600 dark:text-amber-400">{session.status === 'loading' ? '正在加载可用分组...' : session.error || '可用分组加载失败'}</p>
           ) : usableKeys.length === 0 ? (
@@ -191,9 +192,10 @@ export default function AgentModelSelector({ open, onOpenChange }: AgentModelSel
                       type="button"
                       disabled={saving}
                       onClick={() => void selectModel(option)}
-                      className={`flex min-h-10 w-full min-w-0 items-center rounded-lg px-2 text-left text-xs transition-[background-color,color] disabled:opacity-50 ${selected ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
+                      className={`flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-xs transition-[background-color,color] disabled:opacity-50 ${selected ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
                     >
-                      <span className="truncate">{option.model}{kind === 'image' ? ` · ${option.provider === 'gemini' ? 'Gemini' : 'OpenAI'}` : ''}</span>
+                      <ModelBrandIcon model={option.model} />
+                      <span className="min-w-0 truncate">{option.model}{kind === 'image' ? ` · ${option.provider === 'gemini' ? 'Gemini' : 'OpenAI'}` : ''}</span>
                     </button>
                   )
                 })}
