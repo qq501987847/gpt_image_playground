@@ -109,7 +109,6 @@ export default function InputParamsPanel({
       : {}
     return <div className="space-y-3 text-xs">
       {modelSupportsField(capability, 'quality') && <section><p className="mb-1 text-gray-500 dark:text-gray-400">质量</p><div className="grid grid-cols-4 gap-2">{capability.qualities.map((value) => <button key={value} type="button" onClick={() => setParams({ quality: value })} className={buttonClass(params.quality === value)}>{value === 'auto' ? '自动' : value === 'low' ? '低' : value === 'medium' ? '中' : '高'}</button>)}</div></section>}
-      {modelSupportsField(capability, 'output_format') && <section><p className="mb-1 text-gray-500 dark:text-gray-400">格式</p><div className="grid grid-cols-3 gap-2">{(['png', 'jpeg', 'webp'] as const).map((value) => <button key={value} type="button" onClick={() => setParams({ output_format: value, transparent_output: false, ...(value === 'png' ? { output_compression: null } : {}) })} className={buttonClass(params.output_format === value)}>{value === 'png' ? 'PNG' : value === 'jpeg' ? 'JPEG' : 'WebP'}</button>)}</div></section>}
       {modelSupportsField(capability, 'size') && !capability.aspectRatios && <section><p className="mb-1 text-gray-500 dark:text-gray-400">分辨率</p><div className="grid grid-cols-4 gap-2">{capability.sizes.map((value) => <button key={value} type="button" onClick={() => setParams({ size: value })} className={buttonClass(params.size === value)}>{value === 'auto' ? '自动' : value}</button>)}</div></section>}
       {modelSupportsField(capability, 'geminiImageSize') && <section><p className="mb-1 text-gray-500 dark:text-gray-400">{isGeminiProvider ? '清晰度' : '分辨率'}</p><div className={`grid gap-2 ${isGeminiProvider ? 'grid-cols-4' : 'grid-cols-3'}`}>{(isGeminiProvider ? (capability.verified ? GEMINI_IMAGE_SIZES : ['auto']) : GPT_IMAGE_2_RESOLUTIONS.filter((value) => gptImage2Sizes[value])).map((value) => {
         const size = gptImage2Sizes[value]
@@ -199,26 +198,6 @@ export default function InputParamsPanel({
         <ButtonTooltip
           visible={(activeProfile.codexCli || isFalProvider) && qualityHint.visible}
           text={isFalProvider ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</> : 'Codex CLI 不支持质量参数'}
-        />
-      </label>}
-      {showAdvanced && modelSupportsField(capability, 'output_format') && <label className="flex flex-col gap-0.5">
-        <span className="text-gray-400 dark:text-gray-500 ml-1">格式</span>
-        <Select
-          value={params.output_format}
-          onChange={(val) => {
-            setParams({
-              output_format: val as TaskParams['output_format'],
-              transparent_output: false,
-              ...(val === 'png' ? { output_compression: null } : {}),
-            })
-          }}
-          options={[
-            { label: 'PNG', value: 'png' },
-            { label: 'JPEG', value: 'jpeg' },
-            { label: 'WebP', value: 'webp' },
-          ]}
-          showValueTooltips={false}
-          className={selectClass}
         />
       </label>}
       {showAdvanced && modelSupportsField(capability, 'output_compression') ? (
