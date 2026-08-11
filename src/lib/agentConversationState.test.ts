@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentConversation, AgentRound } from '../types'
-import { getAgentBranchLeafId, getAgentRoundPath, getConversationSearchText, normalizeAgentConversations } from './agentConversationState'
+import { deleteAgentRoundFromConversation, getAgentBranchLeafId, getAgentRoundPath, getConversationSearchText, normalizeAgentConversations } from './agentConversationState'
 
 function round(id: string, parentRoundId: string | null, index: number): AgentRound {
   return {
@@ -182,5 +182,69 @@ describe('agent conversation state', () => {
   it('defaults legacy conversations to read state', () => {
     const [normalized] = normalizeAgentConversations([conversation([], null)])
     expect(normalized.unread).toBe(false)
+  })
+
+  it('preserves a valid built-in skill and clears its plan when the source round is missing', () => {
+    const valid = normalizeAgentConversations([{
+      ...conversation([round('round-a', null, 1)], 'round-a'),
+      skillId: 'ecom-details-image',
+      skillMode: 'hero',
+      skillPlan: {
+        skillId: 'ecom-details-image',
+        title: '主图方案',
+        styleLock: '统一风格',
+        sourceRoundId: 'round-a',
+        status: 'review',
+        groups: [{
+          kind: 'hero',
+          title: '主图',
+          images: Array.from({ length: 5 }, (_, idx) => ({
+            id: `H${idx + 1}`,
+            title: `主图 ${idx + 1}`,
+            prompt: `生成主图 ${idx + 1}`,
+            aspectRatio: '1:1',
+            resolution: '2K',
+          })),
+        }],
+      },
+    }])[0]
+    expect(valid).toMatchObject({ skillId: 'ecom-details-image', skillMode: 'hero', skillPlan: { sourceRoundId: 'round-a' } })
+
+    const approvedSubset = normalizeAgentConversations([{
+      ...valid,
+      skillMode: 'full',
+      skillPlan: { ...valid.skillPlan!, status: 'approved' },
+    }])[0]
+    expect(approvedSubset).toMatchObject({ skillMode: 'full', skillPlan: { status: 'approved', groups: [{ kind: 'hero' }] } })
+
+    const missing = normalizeAgentConversations([{ ...valid, rounds: [], messages: [] }])[0]
+    expect(missing.skillPlan).toBeNull()
+  })
+
+  it('clears a skill plan when deleting one of its source ancestors', () => {
+    const value = normalizeAgentConversations([{
+      ...conversation([round('round-a', null, 1), round('round-b', 'round-a', 2)], 'round-b'),
+      skillId: 'ecom-details-image',
+      skillMode: 'hero',
+      skillPlan: {
+        skillId: 'ecom-details-image',
+        title: '主图方案',
+        styleLock: '统一风格',
+        sourceRoundId: 'round-b',
+        status: 'review',
+        groups: [{
+          kind: 'hero',
+          title: '主图',
+          images: Array.from({ length: 5 }, (_, idx) => ({
+            id: `H${idx + 1}`,
+            title: `主图 ${idx + 1}`,
+            prompt: `生成主图 ${idx + 1}`,
+            aspectRatio: '1:1',
+            resolution: '2K',
+          })),
+        }],
+      },
+    }])[0]
+    expect(deleteAgentRoundFromConversation(value, 'round-a').skillPlan).toBeNull()
   })
 })

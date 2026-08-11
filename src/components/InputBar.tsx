@@ -25,6 +25,7 @@ import DragUploadOverlay from './input/dragUploadOverlay'
 import InputBatchBars from './input/inputBatchBars'
 import InputParamsPanel from './input/inputParamsPanel'
 import AgentModelSelector from './input/agentModelSelector'
+import AgentSkillSelector from './input/agentSkillSelector'
 import ModelSelector from './input/modelSelector'
 
 /** API 支持的最大参考图数量 */
@@ -338,6 +339,7 @@ export default function InputBar() {
   const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
   const [showParamsPopover, setShowParamsPopover] = useState(false)
   const [showAgentModelSelector, setShowAgentModelSelector] = useState(false)
+  const [showAgentSkillSelector, setShowAgentSkillSelector] = useState(false)
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
   const [imageDragIndex, setImageDragIndex] = useState<number | null>(null)
   const [imageDragOverIndex, setImageDragOverIndex] = useState<number | null>(null)
@@ -1934,11 +1936,24 @@ export default function InputBar() {
           <div className="absolute bottom-1 left-2 right-2 z-50 flex min-w-0 items-center gap-1.5">
             <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-200 text-gray-500 shadow-sm transition-transform active:scale-[0.96] dark:bg-white/[0.06] dark:text-gray-300" aria-label="上传图片"><PlusIcon className="h-5 w-5" /></button>
             {appMode === 'gallery' && <div className="min-w-0 shrink-0">{renderCompactModelSelector()}</div>}
+            {appMode === 'agent' && <AgentSkillSelector
+              open={showAgentSkillSelector}
+              onOpenChange={(open) => {
+                setShowAgentSkillSelector(open)
+                if (open) {
+                  setShowAgentModelSelector(false)
+                  setShowParamsPopover(false)
+                }
+              }}
+            />}
             {appMode === 'agent' && <AgentModelSelector
               open={showAgentModelSelector}
               onOpenChange={(open) => {
                 setShowAgentModelSelector(open)
-                if (open) setShowParamsPopover(false)
+                if (open) {
+                  setShowAgentSkillSelector(false)
+                  setShowParamsPopover(false)
+                }
               }}
             />}
             <span className="h-6 w-px shrink-0 bg-gray-200 dark:bg-white/[0.12]" />
@@ -1946,6 +1961,7 @@ export default function InputBar() {
               <button
                 type="button"
                 onClick={() => {
+                  setShowAgentSkillSelector(false)
                   setShowAgentModelSelector(false)
                   setShowParamsPopover(true)
                 }}

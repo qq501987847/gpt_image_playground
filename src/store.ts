@@ -5,6 +5,11 @@ import type {
   AgentInputDraft,
   AgentMessage,
   AgentRound,
+  AgentImagePlanGroupKind,
+  AgentImagePlanItem,
+  AgentSkillId,
+  AgentSkillMode,
+  AgentSkillPlan,
   ApiMode,
   ApiProfile,
   AppSettings,
@@ -46,6 +51,7 @@ import {
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
+import { AGENT_SKILL_PLAN_FUNCTION_NAME, getAgentSkillBaseItemId, getAgentSkillPlanStageError, getAgentSkillSession, parseAgentSkillPlanCall, selectAgentSkillPlanGroups } from './lib/agentSkills'
 import { buildAgentApiInput, buildAgentContinuationInput } from './lib/agentInputBuilder'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
@@ -332,6 +338,7 @@ interface AppState {
   createAgentConversation: () => string
   setActiveAgentConversationId: (id: string | null) => void
   setActiveAgentRoundId: (conversationId: string, roundId: string | null) => void
+  setAgentConversationSkill: (conversationId: string, skillId: AgentSkillId | null, mode?: AgentSkillMode) => void
   renameAgentConversation: (id: string, title: string) => void
   deleteAgentConversation: (id: string) => void
   deleteAgentRound: (conversationId: string, roundId: string) => Promise<AgentDeletionResult>
@@ -797,6 +804,20 @@ export const useStore = create<AppState>()(
         agentConversations: state.agentConversations.map((conversation) =>
           conversation.id === conversationId ? { ...conversation, activeRoundId: roundId, updatedAt: Date.now() } : conversation,
         ),
+      })),
+      setAgentConversationSkill: (conversationId, skillId, mode) => set((state) => ({
+        agentConversations: state.agentConversations.map((conversation) => {
+          if (conversation.id !== conversationId) return conversation
+          if (conversation.rounds.some((round) => round.status === 'running')) return conversation
+          if (!skillId) return { ...conversation, skillId: null, skillMode: undefined, skillPlan: null, updatedAt: Date.now() }
+          return {
+            ...conversation,
+            skillId,
+            skillMode: mode === 'hero' || mode === 'detail' || mode === 'full' ? mode : 'full',
+            skillPlan: null,
+            updatedAt: Date.now(),
+          }
+        }),
       })),
       renameAgentConversation: (id, title) => set((state) => ({ agentConversations: state.agentConversations.map((c) => (c.id === id ? { ...c, title, updatedAt: Date.now() } : c)) })),
       deleteAgentConversation: (id) => set((state) => {
@@ -2374,6 +2395,7 @@ export async function submitAgentMessage() {
     return {
       ...current,
       title: nextTitle,
+      ...(current.skillId ? { skillPlan: null } : {}),
       activeRoundId: roundId,
       updatedAt: now,
       rounds: shouldAppendToEditingRound
@@ -2393,6 +2415,107 @@ export async function submitAgentMessage() {
   }
 
   void executeAgentRound(conversation.id, roundId, normalizedParams, requestSettings, activeProfile, imageProfile)
+}
+
+export async function approveAgentSkillPlan(
+  conversationId: string,
+  sourceRoundId: string,
+  selectedKinds: AgentImagePlanGroupKind[],
+) {
+  const state = useStore.getState()
+  const normalizedSettings = normalizeSettings(state.settings)
+  const conversation = state.agentConversations.find((item) => item.id === conversationId)
+  const plan = conversation?.skillPlan
+  if (!conversation || !plan || plan.status !== 'review' || plan.sourceRoundId !== sourceRoundId) {
+    state.showToast('图片方案已失效，请重新规划', 'error')
+    return
+  }
+  if (!getActiveAgentRounds(conversation).some((round) => round.id === sourceRoundId)) {
+    state.showToast('图片方案不在当前对话分支，请重新规划', 'error')
+    return
+  }
+  if (conversation.rounds.some((round) => round.status === 'running')) {
+    state.showToast('请等待当前回复完成，或先停止生成', 'info')
+    return
+  }
+
+  const approvedPlan = selectAgentSkillPlanGroups(plan, selectedKinds)
+  if (!approvedPlan) {
+    state.showToast('请至少选择一个有效图片分组', 'error')
+    return
+  }
+
+  const agentValidationError = getRuntimeAgentProfileValidationError(normalizedSettings)
+  if (agentValidationError) {
+    state.showToast(`请先完善 Agent API 配置：${agentValidationError.message}`, 'error')
+    openAgentSetupForInvalidConfig(state, normalizedSettings)
+    return
+  }
+
+  const activeProfile = getAgentTextApiProfile(normalizedSettings)!
+  const imageProfile = getAgentImageApiProfile(normalizedSettings)!
+  const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
+  const imageRequestSettings = createSettingsForApiProfile(normalizedSettings, imageProfile)
+  const params = {
+    ...normalizeParamsForSettings(state.params, imageRequestSettings),
+    n: DEFAULT_PARAMS.n,
+    transparent_output: false,
+  }
+  const now = Date.now()
+  const roundId = genId()
+  const userMessageId = genId()
+  const groupLabels = approvedPlan.groups.map((group) => `${group.title} ${group.images.length} 张`)
+  const prompt = `已确认生成${groupLabels.join('、')}，请严格按已批准方案开始生成。`
+  const sourcePath = getAgentRoundPath(conversation, sourceRoundId)
+  const round: AgentRound = {
+    id: roundId,
+    index: sourcePath.length + 1,
+    parentRoundId: sourceRoundId,
+    userMessageId,
+    prompt,
+    inputImageIds: [],
+    maskTargetImageId: null,
+    maskImageId: null,
+    outputTaskIds: [],
+    status: 'running',
+    error: null,
+    createdAt: now,
+    finishedAt: null,
+  }
+  const userMessage: AgentMessage = {
+    id: userMessageId,
+    role: 'user',
+    content: prompt,
+    roundId,
+    inputImageIds: [],
+    maskTargetImageId: null,
+    maskImageId: null,
+    createdAt: now,
+  }
+
+  updateAgentConversation(conversationId, (current) => ({
+    ...current,
+    skillPlan: approvedPlan,
+    activeRoundId: roundId,
+    updatedAt: now,
+    rounds: [...current.rounds, round],
+    messages: [...current.messages, userMessage],
+  }))
+  state.setAgentEditingRoundId(null)
+  state.showToast(`已确认，开始生成 ${approvedPlan.groups.reduce((count, group) => count + group.images.length, 0)} 张图片`, 'info')
+  void executeAgentRound(conversationId, roundId, params, requestSettings, activeProfile, imageProfile)
+}
+
+export function dismissAgentSkillPlan(conversationId: string, sourceRoundId: string) {
+  const state = useStore.getState()
+  const conversation = state.agentConversations.find((item) => item.id === conversationId)
+  if (!conversation?.skillPlan || conversation.skillPlan.sourceRoundId !== sourceRoundId || conversation.skillPlan.status !== 'review') return
+  updateAgentConversation(conversationId, (current) => ({
+    ...current,
+    skillPlan: null,
+    updatedAt: Date.now(),
+  }))
+  state.showToast('已取消图片方案', 'info')
 }
 
 export async function regenerateAgentAssistantMessage(conversationId: string, roundId: string) {
@@ -2439,6 +2562,9 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
       ?? conversation.messages.find((message) => message.roundId === sourceRound.id && message.role === 'assistant')?.id
     updateAgentConversation(conversationId, (current) => ({
       ...current,
+      ...(current.skillPlan && getAgentRoundPath(current, current.skillPlan.sourceRoundId).some((round) => round.id === sourceRound.id)
+        ? { skillPlan: null }
+        : {}),
       activeRoundId: sourceRound.id,
       updatedAt: now,
       rounds: current.rounds.map((round) =>
@@ -2495,6 +2621,9 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
 
   updateAgentConversation(conversationId, (current) => ({
     ...current,
+    ...(current.skillPlan && getAgentRoundPath(current, current.skillPlan.sourceRoundId).some((round) => round.id === sourceRound.id)
+      ? { skillPlan: null }
+      : {}),
     activeRoundId: newRoundId,
     updatedAt: now,
     rounds: [...current.rounds, newRound],
@@ -2580,6 +2709,9 @@ async function executeAgentRound(
     const round = conversation.rounds.find((item) => item.id === roundId)
     const userMessage = round ? conversation.messages.find((message) => message.id === round.userMessageId) : null
     if (!round || !userMessage) return
+    const agentSkill = getAgentSkillSession(conversation)
+    const agentSkillApproved = agentSkill?.plan?.status === 'approved'
+    const allowImageGenerationResults = !agentSkill || agentSkillApproved
     const maskDataUrl = round.maskImageId ? await ensureImageCached(round.maskImageId) : undefined
     if (round.maskImageId && !maskDataUrl) throw new Error('遮罩图片已不存在')
 
@@ -2601,6 +2733,44 @@ async function executeAgentRound(
     const streamingTaskIds: string[] = resume ? [...round.outputTaskIds] : []
     const taskIdByToolCallId = new Map<string, string>()
     const taskByToolCallId = new Map<string, TaskRecord>()
+    const approvedSkillItems = new Map(
+      agentSkill?.plan?.status === 'approved'
+        ? agentSkill.plan.groups.flatMap((group) => group.images.map((item) => [item.id, item] as const))
+        : [],
+    )
+    const claimedSkillItemIds = new Set(
+      latestState.tasks
+        .filter((task) => task.agentConversationId === conversationId && task.agentRoundId === roundId && task.agentSkillPlanItemId && task.status === 'done' && task.outputImages.length > 0)
+        .map((task) => task.agentSkillPlanItemId!),
+    )
+    let proposedSkillPlan: AgentSkillPlan | null = null
+
+    const getApprovedSkillItem = (id: string, prompt: string) => {
+      if (approvedSkillItems.size === 0) return { id, prompt, planItem: null }
+      const planItem = approvedSkillItems.get(id)
+      if (!planItem) return null
+      const references = uniqueIds(extractAgentReferenceIds(prompt))
+        .map((refId) => `<ref id="${refId}" />`)
+        .join(' ')
+      return {
+        id,
+        prompt: [agentSkill!.plan!.styleLock, planItem.prompt, references].filter(Boolean).join('\n\n'),
+        planItem,
+      }
+    }
+
+    const getSkillTaskParams = (planItem: AgentImagePlanItem | null, hasInputImages: boolean) => normalizeParamsForSettings(
+      planItem
+        ? {
+            ...imageParams,
+            size: 'auto',
+            geminiAspectRatio: planItem.aspectRatio,
+            geminiImageSize: planItem.resolution,
+          }
+        : imageParams,
+      imageRequestSettings,
+      { hasInputImages },
+    )
 
     const getDeletedAgentTasks = () => {
       const deletedTasks = getDeletedActiveAgentTasks(conversationId, roundId, controller)
@@ -2639,7 +2809,7 @@ async function executeAgentRound(
       toolCallId: string,
       taskPrompt = '',
       inputImageIds = round.inputImageIds ?? [],
-      options: { createdAt?: number; agentBatchCallId?: string; agentBatchItemId?: string; maskTargetImageId?: string | null; maskImageId?: string | null; taskParams?: TaskParams } = {},
+      options: { createdAt?: number; agentBatchCallId?: string; agentBatchItemId?: string; agentSkillPlanItemId?: string; maskTargetImageId?: string | null; maskImageId?: string | null; taskParams?: TaskParams } = {},
     ) => {
       const existingTaskId = taskIdByToolCallId.get(toolCallId)
       if (existingTaskId) return existingTaskId
@@ -2677,6 +2847,7 @@ async function executeAgentRound(
         agentToolCallId: toolCallId,
         ...(options.agentBatchCallId ? { agentBatchCallId: options.agentBatchCallId } : {}),
         ...(options.agentBatchItemId ? { agentBatchItemId: options.agentBatchItemId } : {}),
+        ...(options.agentSkillPlanItemId ? { agentSkillPlanItemId: options.agentSkillPlanItemId } : {}),
       }
 
       taskIdByToolCallId.set(toolCallId, task.id)
@@ -2844,6 +3015,39 @@ async function executeAgentRound(
       return { dataUrls, imageIds }
     }
 
+    const resolveSkillReferenceImages = async (item: { id: string; prompt: string; planItem: AgentImagePlanItem | null }) => {
+      const baseItemId = getAgentSkillBaseItemId(agentSkill?.plan ?? null)
+      const latestRound = getLatestRound()
+      const latestTasks = useStore.getState().tasks
+      const baseTask = item.planItem && baseItemId && item.id !== baseItemId
+        ? latestTasks.find((task) =>
+            task.agentConversationId === conversationId
+            && task.agentRoundId === roundId
+            && task.agentSkillPlanItemId === baseItemId
+            && task.status === 'done'
+            && task.outputImages.length > 0,
+          )
+        : null
+      if (item.planItem && baseItemId && item.id !== baseItemId && !baseTask) return null
+
+      const outputSlots = latestRound && baseTask ? collectAgentRoundOutputImageSlots(latestRound, latestTasks) : []
+      const baseImageIndex = baseTask ? outputSlots.indexOf(baseTask.outputImages[0]) : -1
+      if (baseTask && baseImageIndex < 0) return null
+      const baseReferenceId = latestRound && baseImageIndex >= 0 ? getAgentGeneratedImageReferenceId(latestRound, baseImageIndex) : null
+      const referenceIds = uniqueIds([
+        ...extractAgentReferenceIds(item.prompt),
+        ...(baseReferenceId ? [baseReferenceId] : []),
+      ])
+      const prompt = baseReferenceId && !extractAgentReferenceIds(item.prompt).includes(baseReferenceId)
+        ? `${item.prompt}\n\n<ref id="${baseReferenceId}" />`
+        : item.prompt
+      return {
+        ...await resolveReferenceImages(referenceIds),
+        referenceIds,
+        prompt,
+      }
+    }
+
     const parseSingleImageCallArguments = (args: string): { id: string; prompt: string } | null => {
       try {
         const parsed = JSON.parse(args) as Record<string, unknown>
@@ -2911,20 +3115,26 @@ async function executeAgentRound(
 
     const executeSingleImageFunctionCall = async (functionCallItem: ResponsesOutputItem): Promise<string | null> => {
       const callId = functionCallItem.call_id ?? ''
-      const item = parseSingleImageCallArguments(functionCallItem.arguments ?? '')
-      if (!item) return JSON.stringify({ error: 'Invalid or empty image arguments' })
+      const parsedItem = parseSingleImageCallArguments(functionCallItem.arguments ?? '')
+      if (!parsedItem) return JSON.stringify({ error: 'Invalid or empty image arguments' })
+      if (agentSkill && !agentSkillApproved) return JSON.stringify({ id: parsedItem.id, status: 'error', error: '图片方案尚未确认' })
+      const stageError = getAgentSkillPlanStageError(agentSkill?.plan ?? null, claimedSkillItemIds, [parsedItem.id], false)
+      if (stageError) return JSON.stringify({ id: parsedItem.id, status: 'error', error: stageError })
+      const item = getApprovedSkillItem(parsedItem.id, parsedItem.prompt)
+      if (!item) return JSON.stringify({ id: parsedItem.id, status: 'error', error: '图片不在已批准方案中' })
 
-      const referenceIds = uniqueIds(extractAgentReferenceIds(item.prompt))
-      const references = await resolveReferenceImages(referenceIds)
+      const references = await resolveSkillReferenceImages(item)
+      if (!references) return JSON.stringify({ id: item.id, status: 'error', error: '基准图已不存在，请重新规划' })
       const toolCallId = callId || genId()
       const taskParams = {
-        ...normalizeParamsForSettings(imageParams, imageRequestSettings, { hasInputImages: references.dataUrls.length > 0 }),
+        ...getSkillTaskParams(item.planItem, references.dataUrls.length > 0),
         n: 1,
       }
 
-      const taskId = await ensureStreamingAgentTask(toolCallId, item.prompt, references.imageIds, {
+      const taskId = await ensureStreamingAgentTask(toolCallId, references.prompt, references.imageIds, {
         createdAt: Date.now(),
         taskParams,
+        ...(item.planItem ? { agentSkillPlanItemId: item.id } : {}),
         maskTargetImageId: null,
         maskImageId: null,
       })
@@ -2932,7 +3142,7 @@ async function executeAgentRound(
       try {
         const result = await callHybridImageApiSingle({
           taskId,
-          prompt: item.prompt,
+          prompt: references.prompt,
           referenceImageDataUrls: references.dataUrls,
           taskParams,
           signal: controller.signal,
@@ -2950,6 +3160,7 @@ async function executeAgentRound(
         if (result.image) {
           const completed = await completeAgentImageTask({ ...result.image, toolCallId }, result.rawResponsePayload)
           if (completed.committed) {
+            if (item.planItem) claimedSkillItemIds.add(item.id)
             toolCallsUsed += 1
             return JSON.stringify({ id: item.id, status: 'done' })
           }
@@ -2971,44 +3182,50 @@ async function executeAgentRound(
     const executeBatchFunctionCall = async (functionCallItem: ResponsesOutputItem): Promise<string> => {
       const callId = functionCallItem.call_id ?? ''
       const args = functionCallItem.arguments ?? ''
-      const batchItems = parseBatchImageCallArguments(args)
+      const parsedBatchItems = parseBatchImageCallArguments(args)
 
-      if (!batchItems || batchItems.length === 0) {
+      if (!parsedBatchItems || parsedBatchItems.length === 0) {
         return JSON.stringify({ error: 'Invalid or empty batch arguments' })
       }
+      if (agentSkill && !agentSkillApproved) return JSON.stringify({ status: 'error', error: '图片方案尚未确认' })
+      const stageError = getAgentSkillPlanStageError(agentSkill?.plan ?? null, claimedSkillItemIds, parsedBatchItems.map((item) => item.id), true)
+      if (stageError) return JSON.stringify({ status: 'error', error: stageError })
+      const batchItems = parsedBatchItems.map((item) => getApprovedSkillItem(item.id, item.prompt))
+      const missingItem = batchItems.findIndex((item) => !item)
+      if (missingItem >= 0) return JSON.stringify({ status: 'error', error: `图片 ${parsedBatchItems[missingItem].id} 不在已批准方案中` })
 
       // Create task cards in model-provided order before starting network calls.
       const batchExecutionItems = []
-      for (const item of batchItems) {
-        const referenceIds = uniqueIds(extractAgentReferenceIds(item.prompt))
-        const references = await resolveReferenceImages(referenceIds)
+      for (const resolvedItem of batchItems) {
+        const item = resolvedItem!
+        const references = await resolveSkillReferenceImages(item)
+        if (!references) return JSON.stringify({ status: 'error', error: '基准图已不存在，请重新规划' })
         const batchToolCallId = genId()
-        const taskParams = requestSettings.agentApiConfigMode === 'hybrid'
-          ? {
-              ...normalizeParamsForSettings(imageParams, imageRequestSettings, { hasInputImages: references.dataUrls.length > 0 }),
-              n: 1,
-            }
-          : { ...imageParams, n: 1 }
-        await ensureStreamingAgentTask(batchToolCallId, item.prompt, references.imageIds, {
+        const taskParams = {
+          ...getSkillTaskParams(item.planItem, references.dataUrls.length > 0),
+          n: 1,
+        }
+        await ensureStreamingAgentTask(batchToolCallId, references.prompt, references.imageIds, {
           createdAt: Date.now(),
           taskParams,
           maskTargetImageId: null,
           maskImageId: null,
           ...(callId ? { agentBatchCallId: callId } : {}),
           agentBatchItemId: item.id,
+          ...(item.planItem ? { agentSkillPlanItemId: item.id } : {}),
         })
-        batchExecutionItems.push({ item, batchToolCallId, references, referenceIds, taskParams })
+        batchExecutionItems.push({ item, batchToolCallId, references, taskParams })
       }
 
       // Fire all batch items concurrently after all cards are visible.
-      const batchPromises = batchExecutionItems.map(async ({ item, batchToolCallId, references, referenceIds, taskParams }) => {
+      const batchPromises = batchExecutionItems.map(async ({ item, batchToolCallId, references, taskParams }) => {
         let committed = false
         const batchResult = requestSettings.agentApiConfigMode === 'hybrid'
           ? {
               batchItemId: item.id,
               ...(await callHybridImageApiSingle({
                 taskId: taskIdByToolCallId.get(batchToolCallId)!,
-                prompt: item.prompt,
+                prompt: references.prompt,
                 referenceImageDataUrls: references.dataUrls,
                 taskParams,
                 signal: controller.signal,
@@ -3026,9 +3243,9 @@ async function executeAgentRound(
               profile: imageProfile,
               params: taskParams,
               batchItemId: item.id,
-              prompt: item.prompt,
+              prompt: references.prompt,
               referenceImageDataUrls: references.dataUrls,
-              referenceIds,
+              referenceIds: references.referenceIds,
               allowPromptRewrite: requestSettings.allowPromptRewrite,
               signal: controller.signal,
               onImageToolStarted: shouldStreamAssistantMessage
@@ -3072,16 +3289,16 @@ async function executeAgentRound(
       // Build function_call_output
       const outputImages: Array<{ id: string; status: string; error?: string }> = []
       let pausedForRecovery = false
-      for (let i = 0; i < batchItems.length; i++) {
+      for (let i = 0; i < batchExecutionItems.length; i++) {
         const settled = batchResults[i]
-        const batchItem = batchItems[i]
-        const taskId = taskIdByToolCallId.get(batchExecutionItems[i].batchToolCallId)
+        const executionItem = batchExecutionItems[i]
+        const taskId = taskIdByToolCallId.get(executionItem.batchToolCallId)
         if (!taskId || !useStore.getState().tasks.some((task) => task.id === taskId)) continue
         if (settled.status === 'fulfilled') {
           const r = settled.value
           if (r.image && !r.committed) continue
           if (!r.image) {
-            failAgentImageTask(batchExecutionItems[i].batchToolCallId, r.error!, r.rawResponsePayload)
+            failAgentImageTask(executionItem.batchToolCallId, r.error!, r.rawResponsePayload)
           }
           outputImages.push({
             id: r.batchItemId,
@@ -3090,13 +3307,13 @@ async function executeAgentRound(
           })
         } else {
           const error = settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
-          if (isAgentRecoveryPauseError(settled.reason) || pauseAgentImageTaskForRecovery(batchExecutionItems[i].batchToolCallId, settled.reason)) {
+          if (isAgentRecoveryPauseError(settled.reason) || pauseAgentImageTaskForRecovery(executionItem.batchToolCallId, settled.reason)) {
             pausedForRecovery = true
             continue
           }
-          failAgentImageTask(batchExecutionItems[i].batchToolCallId, error)
+          failAgentImageTask(executionItem.batchToolCallId, error)
           outputImages.push({
-            id: batchItem.id,
+            id: executionItem.item.id,
             status: 'error',
             error,
           })
@@ -3105,6 +3322,9 @@ async function executeAgentRound(
       if (pausedForRecovery) throw createAgentRecoveryPauseError()
 
       const successCount = outputImages.filter((img) => img.status === 'done').length
+      for (const image of outputImages) {
+        if (image.status === 'done' && approvedSkillItems.has(image.id)) claimedSkillItemIds.add(image.id)
+      }
       toolCallsUsed += successCount
 
       return JSON.stringify({ images: outputImages })
@@ -3124,6 +3344,7 @@ async function executeAgentRound(
         maskDataUrl,
         signal: controller.signal,
         allowImageTools: !resume?.continuationOnly,
+        agentSkill,
         onTextDelta: shouldStreamAssistantMessage
           ? (delta) => {
               if (controller.signal.aborted) return
@@ -3146,13 +3367,13 @@ async function executeAgentRound(
               }))
             }
           : undefined,
-        onImageToolStarted: shouldStreamAssistantMessage
+        onImageToolStarted: shouldStreamAssistantMessage && allowImageGenerationResults
           ? async ({ toolCallId }) => {
               if (controller.signal.aborted) return
               await ensureStreamingAgentTask(toolCallId)
             }
           : undefined,
-        onImagePartialImage: shouldStreamAssistantMessage
+        onImagePartialImage: shouldStreamAssistantMessage && allowImageGenerationResults
           ? async ({ toolCallId, image, partialImageIndex }) => {
               if (controller.signal.aborted) return
               const taskId = await ensureStreamingAgentTask(toolCallId)
@@ -3163,13 +3384,13 @@ async function executeAgentRound(
               }
             }
           : undefined,
-        onImageToolCompleted: shouldStreamAssistantMessage
+        onImageToolCompleted: shouldStreamAssistantMessage && allowImageGenerationResults
           ? async (image) => {
               if (controller.signal.aborted) return
               await completeAgentImageTask(image)
             }
           : undefined,
-        onImageToolFailed: shouldStreamAssistantMessage
+        onImageToolFailed: shouldStreamAssistantMessage && allowImageGenerationResults
           ? async ({ toolCallId, error }) => {
               if (controller.signal.aborted) return
               await ensureStreamingAgentTask(toolCallId)
@@ -3211,7 +3432,7 @@ async function executeAgentRound(
       if (newTextInThisResponse) textSegments.push(newTextInThisResponse)
 
       // Process built-in image_generation_call results (single images)
-      for (const image of resume?.continuationOnly ? [] : result.images) {
+      for (const image of resume?.continuationOnly || !allowImageGenerationResults ? [] : result.images) {
         if (image.toolCallId && taskIdByToolCallId.has(image.toolCallId)) {
           const completed = await completeAgentImageTask(image, result.rawResponsePayload)
           if (!completed.committed) continue
@@ -3288,6 +3509,9 @@ async function executeAgentRound(
       const continueFunctionCalls = (resume?.continuationOnly ? [] : currentResponseOutputItems).filter(
         (item) => item.type === 'function_call' && item.name === 'continue_generation',
       )
+      const skillPlanFunctionCalls = (resume?.continuationOnly ? [] : currentResponseOutputItems).filter(
+        (item) => item.type === 'function_call' && item.name === AGENT_SKILL_PLAN_FUNCTION_NAME,
+      )
 
       // Count built-in tool calls (image_generation, web_search) for budget tracking
       const responseToolCalls = countResponseToolCalls(currentResponseOutputItems)
@@ -3295,6 +3519,32 @@ async function executeAgentRound(
 
       // Collect function_call_output items for all function calls that need responses
       const functionCallOutputs: ResponsesOutputItem[] = []
+
+      for (const fc of skillPlanFunctionCalls) {
+        if (proposedSkillPlan) {
+          functionCallOutputs.push({
+            type: 'function_call_output',
+            call_id: fc.call_id,
+            output: JSON.stringify({ status: 'error', error: '每轮只能提交一个图片方案' }),
+          })
+          continue
+        }
+        const parsed = parseAgentSkillPlanCall(agentSkill, fc.arguments ?? '', roundId)
+        if (!parsed.ok) {
+          functionCallOutputs.push({
+            type: 'function_call_output',
+            call_id: fc.call_id,
+            output: JSON.stringify({ status: 'error', error: parsed.error }),
+          })
+          continue
+        }
+        proposedSkillPlan = parsed.plan
+        functionCallOutputs.push({
+          type: 'function_call_output',
+          call_id: fc.call_id,
+          output: JSON.stringify({ status: 'awaiting_user_confirmation' }),
+        })
+      }
 
       if (imageFunctionCalls.length > 0) {
         for (const fc of imageFunctionCalls) {
@@ -3344,6 +3594,17 @@ async function executeAgentRound(
       const effectiveFunctionCallOutputs = accumulatedOutputItemsWithFunctionOutputs.filter(
         (item) => item.type === 'function_call_output' && item.call_id && generatedOutputCallIds.has(item.call_id),
       )
+
+      if (proposedSkillPlan) {
+        accumulatedOutputItems = accumulatedOutputItemsWithFunctionOutputs
+        updateAgentConversation(conversationId, (current) => ({
+          ...current,
+          skillPlan: proposedSkillPlan,
+          updatedAt: Date.now(),
+          rounds: current.rounds.map((item) => item.id === roundId ? { ...item, responseId: lastResponseId, responseOutput: accumulatedOutputItems } : item),
+        }))
+        break
+      }
 
       // If no function calls need output → model decided the task is done → break
       if (effectiveFunctionCallOutputs.length === 0) {
@@ -3412,7 +3673,7 @@ async function executeAgentRound(
     const finalContent = [joinedText, limitNotice]
       .filter(Boolean)
       .join(joinedText ? '\n\n' : '')
-      || (taskIds.length > 0 || outputIds.length > 0 ? '图像已生成。' : '')
+      || (proposedSkillPlan ? '图片方案已整理，请确认生成范围后继续。' : taskIds.length > 0 || outputIds.length > 0 ? '图像已生成。' : '')
 
     const assistantMessage: AgentMessage = {
       id: assistantMessageId,
@@ -3445,7 +3706,7 @@ async function executeAgentRound(
         : [...current.messages, assistantMessage],
     }))
 
-    useStore.getState().showToast(outputIds.length > 0 ? 'Agent 已生成图片' : 'Agent 已回复', 'success')
+    useStore.getState().showToast(proposedSkillPlan ? '图片方案待确认' : outputIds.length > 0 ? 'Agent 已生成图片' : 'Agent 已回复', 'success')
     showTaskCompletionNotification(
       outputIds.length > 0 ? 'Agent 已生成图片' : 'Agent 已回复',
       outputIds.length > 0 ? `Agent 回复已结束，共生成 ${outputIds.length} 张图片。` : 'Agent 回复已结束。',

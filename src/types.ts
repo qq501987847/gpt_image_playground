@@ -5,6 +5,9 @@ export const REASONING_EFFORT_VALUES = ['none', 'minimal', 'low', 'medium', 'hig
 export type ReasoningEffort = typeof REASONING_EFFORT_VALUES[number]
 export type AppMode = 'gallery' | 'agent'
 export type AgentApiConfigMode = 'off' | 'native' | 'hybrid'
+export type AgentSkillId = 'ecom-details-image'
+export type AgentSkillMode = 'hero' | 'detail' | 'full'
+export type AgentImagePlanGroupKind = 'hero' | 'detail'
 export const ZIP_DOWNLOAD_ROUTE_VALUES = [
   'task-selection',
   'favorite-collection-selection',
@@ -251,6 +254,8 @@ export interface TaskRecord {
   agentBatchCallId?: string
   /** Agent 批量图像工具中的稳定条目 ID */
   agentBatchItemId?: string
+  /** Agent 技能方案中的稳定图片项 ID */
+  agentSkillPlanItemId?: string
   /** Agent 图像工具实际动作 */
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
   /** OPFS 写入失败后仅在当前页面保留的输出 */
@@ -290,6 +295,29 @@ export interface AgentMessage {
   createdAt: number
 }
 
+export interface AgentImagePlanItem {
+  id: string
+  title: string
+  prompt: string
+  aspectRatio: string
+  resolution: '1K' | '2K' | '4K'
+}
+
+export interface AgentImagePlanGroup {
+  kind: AgentImagePlanGroupKind
+  title: string
+  images: AgentImagePlanItem[]
+}
+
+export interface AgentSkillPlan {
+  skillId: AgentSkillId
+  title: string
+  styleLock: string
+  groups: AgentImagePlanGroup[]
+  sourceRoundId: string
+  status: 'review' | 'approved'
+}
+
 export interface AgentRound {
   id: string
   index: number
@@ -312,6 +340,9 @@ export interface AgentRound {
 export interface AgentConversation {
   id: string
   title: string
+  skillId?: AgentSkillId | null
+  skillMode?: AgentSkillMode
+  skillPlan?: AgentSkillPlan | null
   activeRoundId?: string | null
   createdAt: number
   updatedAt: number

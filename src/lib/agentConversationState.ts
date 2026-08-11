@@ -1,4 +1,5 @@
 import type { AgentConversation, AgentMessage, AgentRound, TaskRecord } from '../types'
+import { normalizeAgentSkillConversation } from './agentSkills'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
 
 const AGENT_ROUND_IMAGE_MENTION_RE = /@(?:第)?(\d+)轮图(\d+)/g
@@ -110,6 +111,7 @@ export function normalizeAgentConversations(value: unknown): AgentConversation[]
       return {
         id: conversation.id,
         title: typeof conversation.title === 'string' && conversation.title.trim() ? conversation.title : '新对话',
+        ...normalizeAgentSkillConversation(conversation, roundIds),
         activeRoundId: typeof conversation.activeRoundId === 'string' && roundIds.has(conversation.activeRoundId) ? conversation.activeRoundId : rounds[rounds.length - 1]?.id ?? null,
         createdAt: typeof conversation.createdAt === 'number' ? conversation.createdAt : Date.now(),
         updatedAt: typeof conversation.updatedAt === 'number' ? conversation.updatedAt : Date.now(),
@@ -202,6 +204,9 @@ export function remapAgentRoundMentionsForPathChange(content: string, oldPath: A
 export function deleteAgentRoundFromConversation(conversation: AgentConversation, roundId: string, now = Date.now()): AgentConversation {
   const targetRound = conversation.rounds.find((round) => round.id === roundId)
   if (!targetRound) return conversation
+  const invalidatesSkillPlan = Boolean(
+    conversation.skillPlan && getAgentRoundPath(conversation, conversation.skillPlan.sourceRoundId).some((round) => round.id === roundId),
+  )
 
   const oldPathByRoundId = new Map(conversation.rounds.map((round) => [round.id, getAgentRoundPath(conversation, round.id)]))
   const rounds = conversation.rounds
@@ -229,6 +234,7 @@ export function deleteAgentRoundFromConversation(conversation: AgentConversation
   const activeRounds = getActiveAgentRounds(withRemappedMessages)
   return {
     ...withRemappedMessages,
+    ...(invalidatesSkillPlan ? { skillPlan: null } : {}),
     activeRoundId: withRemappedMessages.activeRoundId ?? activeRounds[activeRounds.length - 1]?.id ?? null,
     updatedAt: now,
   }

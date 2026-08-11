@@ -14,6 +14,7 @@ import MarkdownRenderer from './MarkdownRenderer'
 import { TooltipButton as AgentActionButton } from './TooltipButton'
 import { TrashIcon, DownloadIcon, EditIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, SidebarLeftIcon, FavoriteIcon, CloseIcon, CopyIcon, RefreshIcon, ArrowDownIcon } from './icons'
 import AgentConversationNav from './AgentConversationNav'
+import AgentSkillPlanCard from './AgentSkillPlanCard'
 
 function ChatImageThumb({ imageId, imageIndex, maskImageId }: { imageId: string; imageIndex: number; maskImageId?: string | null }) {
   const [src, setSrc] = useState<string>(() => getCachedImage(imageId) || '')
@@ -634,6 +635,7 @@ export default function AgentWorkspace() {
                 const hasRoundFavoriteTasks = favoriteTasksForRound.length > 0
                 const allRoundTasksFavorited = hasRoundFavoriteTasks && favoriteTasksForRound.every((task) => task.isFavorite)
                 const assistantBlocks = isAssistant ? getAgentAssistantBlocks(round ?? null, taskSlotsForRound, tasks, Boolean(message.content.trim())) : []
+                const skillPlan = isAssistant && conversation.skillPlan?.sourceRoundId === round?.id ? conversation.skillPlan : null
                 const inputImagesForRound = (round?.inputImageIds || []).map(id => ({ id, dataUrl: '' }))
                 const parts = getPromptMentionParts(message.content, inputImagesForRound)
                 return (
@@ -875,6 +877,7 @@ export default function AgentWorkspace() {
                         )}
                       </div>
                     </div>}
+                    {skillPlan && <AgentSkillPlanCard conversationId={conversation.id} plan={skillPlan} />}
                     </div>
                 </div>
                 )

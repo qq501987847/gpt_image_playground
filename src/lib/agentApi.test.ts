@@ -104,6 +104,67 @@ describe('callAgentResponsesApi', () => {
     expect(body).not.toHaveProperty('tools')
   })
 
+  it('uses only the ecommerce planning tool until the user approves the package', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'plan-response',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: '方案如下' }] }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', apiMode: 'responses' })
+
+    await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: '生成完整电商套图' }] }],
+      agentSkill: { skillId: 'ecom-details-image', mode: 'full', plan: null },
+    })
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body.tools.map((tool: { name?: string; type: string }) => tool.name ?? tool.type)).toEqual(['propose_image_plan'])
+    expect(body.instructions).toContain('No image-generation tool is available until the user reviews')
+  })
+
+  it('uses app-controlled image functions for an approved ecommerce package', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'approved-response',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: '开始生成' }] }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', apiMode: 'responses' })
+
+    await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: '已确认' }] }],
+      agentSkill: {
+        skillId: 'ecom-details-image',
+        mode: 'hero',
+        plan: {
+          skillId: 'ecom-details-image',
+          title: '主图方案',
+          styleLock: '固定视觉风格',
+          sourceRoundId: 'round-1',
+          status: 'approved',
+          groups: [{
+            kind: 'hero',
+            title: '主图',
+            images: Array.from({ length: 5 }, (_, index) => ({
+              id: `H${index + 1}`,
+              title: `主图 ${index + 1}`,
+              prompt: `生成主图 ${index + 1}`,
+              aspectRatio: '1:1',
+              resolution: '2K' as const,
+            })),
+          }],
+        },
+      },
+    })
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body.tools.map((tool: { name?: string; type: string }) => tool.name ?? tool.type)).toEqual(['generate_image', 'generate_image_batch', 'continue_generation'])
+    expect(body.instructions).toContain('Stage 1')
+  })
+
   it('reports failed image output item without aborting the ongoing stream', async () => {
     const streamBody = [
       'data: {"type":"response.output_item.added","item":{"id":"ig_fail","type":"image_generation_call","status":"in_progress"},"output_index":0}',

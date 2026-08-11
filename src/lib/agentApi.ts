@@ -1,6 +1,7 @@
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { appendStreamingFormatHint, getApiErrorMessage, getResponsesImageResultBase64, maybeAppendStreamingHint, MIME_MAP, normalizeBase64Image, pickActualParams, PROMPT_REWRITE_GUARD_PREFIX } from './imageApiShared'
+import { resolveAgentSkillRequest, type AgentSkillSession } from './agentSkills'
 import { normalizeResponsesOutputItems } from './responsesOutputState'
 import { isDesktopRuntime } from './runtime'
 import { isEventStreamResponse, readJsonServerSentEvents, throwIfAborted } from './serverSentEvents'
@@ -60,14 +61,15 @@ const AGENT_MATH_FORMATTING_INSTRUCTIONS = [
   '- Do not use LaTeX delimiters like `\\(...\\)` or `\\[...\\]` in visible assistant text.',
 ].join('\n')
 
-function createAgentInstructions(settings: AppSettings, codexCliSize?: string) {
+function createAgentInstructions(settings: AppSettings, codexCliSize?: string, agentSkill?: AgentSkillSession | null) {
   const maxToolRounds = Number.isFinite(settings.agentMaxToolRounds)
     ? Math.max(1, Math.trunc(settings.agentMaxToolRounds))
     : DEFAULT_AGENT_MAX_TOOL_ROUNDS
-  const imageToolInstruction = settings.agentApiConfigMode === 'hybrid'
+  const useFunctionImageTool = settings.agentApiConfigMode === 'hybrid' || agentSkill?.plan?.status === 'approved'
+  const imageToolInstruction = useFunctionImageTool
     ? 'Use generate_image for single-image requests and generate_image_batch for concurrent multi-image requests. The built-in image_generation tool is not available in this session.'
     : 'Use image_generation for single-image requests and generate_image_batch for concurrent multi-image requests.'
-  const imageInstructions = settings.agentApiConfigMode === 'hybrid'
+  const imageInstructions = useFunctionImageTool
     ? AGENT_IMAGE_INSTRUCTIONS.replace(/image_generation/g, 'generate_image')
     : AGENT_IMAGE_INSTRUCTIONS
   const instructions = [
@@ -86,6 +88,8 @@ function createAgentInstructions(settings: AppSettings, codexCliSize?: string) {
   }
 
   if (!isDesktopRuntime || settings.agentMathFormattingPrompt) instructions.push('', AGENT_MATH_FORMATTING_INSTRUCTIONS)
+  const skillRequest = resolveAgentSkillRequest(agentSkill ?? null)
+  if (skillRequest) instructions.push('', skillRequest.instructions)
 
   return instructions.join('\n')
 }
@@ -166,11 +170,19 @@ function createGenerateImageFunctionTool() {
   }
 }
 
-function createAgentTools(params: TaskParams, profile: ApiProfile, settings: AppSettings, maskDataUrl?: string): Array<Record<string, unknown>> {
-  const tools: Array<Record<string, unknown>> = settings.agentApiConfigMode === 'hybrid'
+function createAgentTools(params: TaskParams, profile: ApiProfile, settings: AppSettings, maskDataUrl?: string, agentSkill?: AgentSkillSession | null): Array<Record<string, unknown>> {
+  const skillTools = resolveAgentSkillRequest(agentSkill ?? null)?.tools
+  const useFunctionImageTool = settings.agentApiConfigMode === 'hybrid' || agentSkill?.plan?.status === 'approved'
+  const tools: Array<Record<string, unknown>> = skillTools
+    ? [...skillTools]
+    : useFunctionImageTool
     ? [createGenerateImageFunctionTool()]
     : [createImageTool(params, profile, maskDataUrl)]
-  const singleImageToolInstruction = settings.agentApiConfigMode === 'hybrid'
+  if (skillTools) {
+    if (settings.agentWebSearch) tools.push({ type: 'web_search' })
+    return tools
+  }
+  const singleImageToolInstruction = useFunctionImageTool
     ? 'For single images or prerequisite/base images, use the generate_image tool instead.'
     : 'For single images or prerequisite/base images, use the built-in image_generation tool instead.'
 
@@ -603,8 +615,9 @@ export async function callAgentResponsesApi(opts: {
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
   onImageToolFailed?: (event: AgentApiImageToolFailure) => void | Promise<void>
   allowImageTools?: boolean
+  agentSkill?: AgentSkillSession | null
 }): Promise<AgentApiResult> {
-  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed, allowImageTools = true } = opts
+  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed, allowImageTools = true, agentSkill } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -617,9 +630,9 @@ export async function callAgentResponsesApi(opts: {
   try {
     const body: Record<string, unknown> = {
       model: profile.model || settings.model,
-      instructions: createAgentInstructions(settings, (imageProfile ?? profile).codexCli ? params.size : undefined),
+      instructions: createAgentInstructions(settings, (imageProfile ?? profile).codexCli ? params.size : undefined, agentSkill),
       input,
-      ...(allowImageTools ? { tools: createAgentTools(params, profile, settings, maskDataUrl) } : {}),
+      ...(allowImageTools ? { tools: createAgentTools(params, profile, settings, maskDataUrl, agentSkill) } : {}),
     }
     if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
     if (profile.streamImages) {
