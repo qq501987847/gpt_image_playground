@@ -18,11 +18,11 @@ import ImageContextMenu from './components/ImageContextMenu'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { hydrateSub2ApiProfiles, initializeSub2ApiSession, useSub2ApiSession } from './lib/sub2apiSession'
-import { isSub2ApiKeyUsable } from './lib/sub2api'
 import CloudBackupDisclosure from './components/CloudBackupDisclosure'
 import AgentSetupModal from './components/AgentSetupModal'
 import { isDesktopRuntime } from './lib/runtime'
 import { getAgentProfileValidationError } from './lib/agentProfileValidation'
+import { shouldOpenAgentSetup } from './lib/agentStartup'
 
 const releaseMode = import.meta.env.VITE_AWAI_RELEASE_MODE === 'true'
 
@@ -37,54 +37,67 @@ export default function App() {
   useGlobalClickSuppression()
 
   useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search)
-    const clearAppliedUrlSettings = () => {
-      if (!hasUrlSettingParams(searchParams)) return
-
-      clearUrlSettingParams(searchParams)
-
-      const nextSearch = searchParams.toString()
-      const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
-      window.history.replaceState(null, '', nextUrl)
-    }
-
-    const currentSettings = useStore.getState().settings
-    const nextSettings = releaseMode ? currentSettings : buildSettingsFromUrlParams(currentSettings, searchParams)
-
-    setSettings(nextSettings)
-
-    clearAppliedUrlSettings()
-
-    initStore()
     let refreshing = false
+    let disposed = false
     const refreshSub2Api = async (openSetupIfNeeded = false) => {
-      if (refreshing) return
+      if (refreshing || disposed) return
       refreshing = true
       try {
         const session = await initializeSub2ApiSession()
-        if (session.status !== 'ready') return
+        if (disposed || session.status !== 'ready') return
         const state = useStore.getState()
         const profiles = await hydrateSub2ApiProfiles(state.settings.profiles)
+        if (disposed) return
         state.setSettings({ ...state.settings, profiles })
         if (!openSetupIfNeeded) return
 
-        const hasBoundProfile = profiles.some((profile) =>
-          session.keys.some((key) => key.id === profile.keyId && isSub2ApiKeyUsable(key)),
-        )
-        if (session.context && session.keys.some(isSub2ApiKeyUsable) && !hasBoundProfile) {
+        if (session.context && shouldOpenAgentSetup(useStore.getState().settings, session.keys)) {
           useStore.getState().setAppMode('agent')
         }
       } finally {
         refreshing = false
       }
     }
+    const initialize = async () => {
+      if (!useStore.persist.hasHydrated()) {
+        await new Promise<void>((resolve) => {
+          const unsubscribe = useStore.persist.onFinishHydration(() => {
+            unsubscribe()
+            resolve()
+          })
+        })
+      }
+      if (disposed) return
+
+      const searchParams = new URLSearchParams(window.location.search)
+      const clearAppliedUrlSettings = () => {
+        if (!hasUrlSettingParams(searchParams)) return
+
+        clearUrlSettingParams(searchParams)
+
+        const nextSearch = searchParams.toString()
+        const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
+        window.history.replaceState(null, '', nextUrl)
+      }
+
+      const currentSettings = useStore.getState().settings
+      const nextSettings = releaseMode ? currentSettings : buildSettingsFromUrlParams(currentSettings, searchParams)
+
+      setSettings(nextSettings)
+
+      clearAppliedUrlSettings()
+
+      initStore()
+      void refreshSub2Api(true)
+    }
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') void refreshSub2Api()
     }
-    void refreshSub2Api(true)
+    void initialize()
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
     return () => {
+      disposed = true
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
     }

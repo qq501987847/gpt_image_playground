@@ -207,7 +207,7 @@ export default function AgentSetupModal() {
             {imageError && <p className="mt-2 text-pretty text-xs text-amber-600 dark:text-amber-400">{imageError}</p>}
           </section>
 
-          <button type="button" disabled={!canConfirm || busy} onClick={() => void confirm()} className="mt-5 flex h-11 w-full items-center justify-center rounded-lg bg-blue-600 text-sm font-medium text-white transition-[transform,background-color,opacity] hover:bg-blue-700 active:scale-[0.96] disabled:opacity-50">{saving ? '正在保存...' : isDesktopRuntime && setupMode === 'image' ? '开始生图' : '进入 Agent'}</button>
+          <button type="button" disabled={!canConfirm || busy} onClick={() => void confirm()} className="mt-5 flex h-11 w-full items-center justify-center rounded-lg bg-blue-600 text-sm font-medium text-white transition-[transform,background-color,opacity] hover:bg-blue-700 active:scale-[0.96] disabled:opacity-50">{saving ? '正在保存...' : isDesktopRuntime && setupMode === 'image' ? '开始生图' : '保存'}</button>
         </div>}
       </section>
     </div>
