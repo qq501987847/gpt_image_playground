@@ -138,11 +138,11 @@ export default function AgentModelSelector({ open, onOpenChange }: AgentModelSel
         onClick={() => toggle(buttonKind)}
         className={`relative z-50 flex h-10 min-w-0 flex-1 items-center gap-1 rounded-xl border px-2 text-left text-[10px] outline-none transition-[transform,background-color,border-color] focus-visible:ring-2 focus-visible:ring-blue-400/50 active:scale-[0.96] sm:text-xs ${open && kind === buttonKind ? 'border-blue-300 bg-blue-50/80 text-blue-700 dark:border-blue-400/30 dark:bg-blue-500/10 dark:text-blue-300' : 'border-gray-200/60 bg-white/50 text-gray-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400'}`}
         aria-expanded={open && kind === buttonKind}
-        aria-label={`切换${label}模型。分组：${group}；模型：${model}`}
-        title={`${label}：${group} / ${model}`}
+        aria-label={`切换${label}模型。模型：${model}；分组：${group}`}
+        title={`${label}模型：${model} · 分组：${group}`}
       >
         <strong className="shrink-0 font-medium text-gray-700 dark:text-gray-200">{label}</strong>
-        <span className="min-w-0 truncate">{group} / {model}</span>
+        <span className="min-w-0 truncate">{model}</span>
       </button>
     )
   }
