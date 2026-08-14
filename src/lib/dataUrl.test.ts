@@ -16,4 +16,11 @@ describe('dataUrl helpers', () => {
   it('converts blobs to data URLs with fallback MIME', async () => {
     await expect(blobToDataUrl(new Blob([new Uint8Array([1, 2, 3])]), 'image/png')).resolves.toBe('data:image/png;base64,AQID')
   })
+
+  it('infers an image MIME when a persisted image blob has no useful type', async () => {
+    const pngHeader = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    await expect(blobToDataUrl(new Blob([pngHeader], { type: 'application/octet-stream' })))
+      .resolves.toMatch(/^data:image\/png;base64,/)
+  })
 })
