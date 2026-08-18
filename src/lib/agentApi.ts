@@ -642,9 +642,8 @@ export async function callAgentResponsesApi(opts: {
   allowImageTools?: boolean
   agentSkill?: AgentSkillSession | null
   promptCacheKey?: string
-  previousResponseId?: string
 }): Promise<AgentApiResult> {
-  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed, allowImageTools = true, agentSkill, promptCacheKey, previousResponseId } = opts
+  const { settings, profile, imageProfile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted, onImageToolFailed, allowImageTools = true, agentSkill, promptCacheKey } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -661,7 +660,6 @@ export async function callAgentResponsesApi(opts: {
       input,
       ...(allowImageTools ? { tools: createAgentTools(params, profile, settings, maskDataUrl, agentSkill) } : {}),
       ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
-      ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
     }
     if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort }
     if (profile.streamImages) {

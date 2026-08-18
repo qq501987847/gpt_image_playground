@@ -4183,8 +4183,10 @@ describe('agent built-in image tool failure', () => {
     liveRequest.resolve({ images: ['data:image/png;base64,live-batch'], actualParams: {}, actualParamsList: [{}], revisedPrompts: ['live prompt'] })
 
     await vi.waitFor(() => expect(callAgentResponsesApi).toHaveBeenCalledTimes(2))
-    expect(vi.mocked(callAgentResponsesApi).mock.calls[1][0].previousResponseId).toBe('response-batch-function')
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[1][0]).not.toHaveProperty('previousResponseId')
     const continuationInput = JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[1][0].input)
+    expect(continuationInput).toContain('画一张图')
+    expect(continuationInput).toContain('generate_image_batch')
     expect(continuationInput).not.toContain('deleted-item')
     expect(continuationInput).not.toContain('deleted prompt')
     expect(continuationInput).toContain('live-item')

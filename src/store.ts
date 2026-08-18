@@ -2933,7 +2933,6 @@ async function executeAgentRound(
     let lastResponseId: string | undefined = round.responseId
     let toolCallsUsed = resume?.toolCallsUsed ?? 0
     let apiInputForTurn = apiInput
-    let previousResponseIdForTurn: string | undefined
     if (resume) {
       const resumeState = useStore.getState()
       apiInputForTurn = await buildAgentContinuationInput({
@@ -3315,7 +3314,6 @@ async function executeAgentRound(
         imageProfile,
         params: imageParams,
         input: apiInputForTurn,
-        previousResponseId: previousResponseIdForTurn,
         maskDataUrl,
         signal: controller.signal,
         allowImageTools: !resume?.continuationOnly,
@@ -3645,9 +3643,7 @@ async function executeAgentRound(
         maxToolCalls,
         loadImage: ensureAgentObservationImageCached,
         continuationOnly: resume?.continuationOnly,
-        usePreviousResponseId: Boolean(lastResponseId),
       })
-      previousResponseIdForTurn = lastResponseId
       accumulatedOutputItems = accumulatedOutputItemsWithFunctionOutputs
       pendingToolTextSeparator = true
     }

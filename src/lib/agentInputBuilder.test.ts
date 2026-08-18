@@ -526,7 +526,7 @@ describe('agent input builder', () => {
     expect(JSON.stringify(input[input.length - 1])).toContain('Tool-call budget: 2/2 used.')
   })
 
-  it('keeps only new tool results when a previous response id carries the history', async () => {
+  it('keeps full history in self-contained HTTP continuation input', async () => {
     const currentRound = round('round-1', 1, { status: 'running', finishedAt: null })
     const functionOutput = { type: 'function_call_output' as const, call_id: 'image-call', output: '{"status":"done"}' }
 
@@ -541,10 +541,10 @@ describe('agent input builder', () => {
       toolCallsUsed: 1,
       maxToolCalls: 3,
       loadImage: noImage,
-      usePreviousResponseId: true,
     })
 
-    expect(JSON.stringify(input)).not.toContain('完整历史不应重复发送')
+    expect(JSON.stringify(input)).toContain('完整历史不应重复发送')
+    expect(JSON.stringify(input)).toContain('generate_image')
     expect(input).toContain(functionOutput)
   })
 

@@ -118,12 +118,13 @@ export async function runLiveSmoke(env, request = fetch) {
   }
   if (!modelIds.includes(geminiModel)) throw new Error('Gemini 模型发现未返回冒烟所需模型')
 
+  const agentPrompt = 'Call generate_image_batch exactly once with a prompt for a plain blue square on white.'
   const agent = await jsonRequest(request, apiUrl(sub2ApiOrigin, '/v1/responses'), {
     method: 'POST',
     headers,
     body: JSON.stringify({
       model: responsesModel,
-      input: 'Call generate_image_batch exactly once with a prompt for a plain blue square on white.',
+      input: agentPrompt,
       tools: [{
         type: 'function',
         name: 'generate_image_batch',
@@ -164,8 +165,11 @@ export async function runLiveSmoke(env, request = fetch) {
     headers,
     body: JSON.stringify({
       model: responsesModel,
-      previous_response_id: agent.body.id,
-      input: [{ type: 'function_call_output', call_id: functionCall.call_id, output: JSON.stringify({ status: 'completed', imageCount: 1 }) }],
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: agentPrompt }] },
+        { type: 'function_call', name: functionCall.name, call_id: functionCall.call_id, arguments: functionCall.arguments ?? '{}' },
+        { type: 'function_call_output', call_id: functionCall.call_id, output: JSON.stringify({ status: 'completed', imageCount: 1 }) },
+      ],
     }),
   }, 'Responses Agent 续轮')
   if (!responseText(continuation.body).includes('AWAI_AGENT_OK')) throw new Error('Responses Agent 续轮响应不含 AWAI_AGENT_OK')

@@ -75,9 +75,17 @@ describe('live release smoke', () => {
     ].some((part) => String(url).includes(part)))
     expect(paidCalls).toHaveLength(4)
     for (const [, init] of paidCalls) expect(init.headers.Authorization).toBe('Bearer menu-derived-key')
-    expect(JSON.parse(paidCalls.find(([url]) => String(url).endsWith('/v1/responses'))[1].body)).toMatchObject({
+    const responseBodies = paidCalls
+      .filter(([url]) => String(url).endsWith('/v1/responses'))
+      .map(([, init]) => JSON.parse(init.body))
+    expect(responseBodies[0]).toMatchObject({
       tools: [{ name: 'generate_image_batch' }],
     })
+    expect(responseBodies[1]).not.toHaveProperty('previous_response_id')
+    expect(responseBodies[1].input).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'function_call', call_id: 'call-1' }),
+      expect.objectContaining({ type: 'function_call_output', call_id: 'call-1' }),
+    ]))
   })
 
   it('rejects an empty Key list before any billable request', async () => {
