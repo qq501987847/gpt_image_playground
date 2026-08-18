@@ -185,6 +185,25 @@ describe('callAgentResponsesApi', () => {
     expect(body.prompt_cache_key).toBe('awai-agent:conversation-a')
   })
 
+  it('sends the previous response id for server-managed continuation', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      id: 'continued-response',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const profile = createDefaultOpenAIProfile({ apiKey: 'test-key', apiMode: 'responses' })
+
+    await callAgentResponsesApi({
+      settings: DEFAULT_SETTINGS,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'new tool result' }] }],
+      previousResponseId: 'response-before-continuation',
+    })
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body.previous_response_id).toBe('response-before-continuation')
+  })
+
   it('omits every image tool for continuation-only replies', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       id: 'continued-response',

@@ -5,6 +5,7 @@ import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
+import PromptLibraryModal from './PromptLibraryModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import { HelpCircleIcon, SettingsIcon } from './icons'
 
@@ -20,6 +21,7 @@ export default function Header() {
   const hasActiveTasks = useStore((s) => s.tasks.some((task) => task.status === 'running'))
   const { hasUpdate, deferred, dismiss } = useVersionCheck(hasActiveTasks)
   const [showHelp, setShowHelp] = useState(false)
+  const [showPromptLibrary, setShowPromptLibrary] = useState(false)
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
 
@@ -102,7 +104,7 @@ export default function Header() {
               </div>
             )}
           </div>
-          <nav aria-label="工作台切换" className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-xl border border-gray-200 bg-gray-100/70 p-1 sm:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
+          <nav aria-label="工作台与提示词库" className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-xl border border-gray-200 bg-gray-100/70 p-1 sm:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
             <button
               type="button"
               onClick={() => setAppMode('gallery')}
@@ -116,6 +118,13 @@ export default function Header() {
               className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'agent' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
               Agent创作台
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPromptLibrary(true)}
+              className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${showPromptLibrary ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+            >
+              提示词库
             </button>
           </nav>
           <div className="flex items-center gap-1 shrink-0">
@@ -156,20 +165,27 @@ export default function Header() {
         </div>
         {deferred && <span className="sr-only">发现新版本，当前任务完成后可刷新</span>}
         <div className={`safe-area-x overflow-hidden transition-[max-height,opacity,padding-bottom] duration-300 ease-in-out sm:hidden ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-20 opacity-100 pb-2'}`}>
-          <nav aria-label="工作台切换" className="mx-2 grid grid-cols-2 gap-1 rounded-xl border border-gray-200 bg-gray-100/70 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
+          <nav aria-label="工作台与提示词库" className="mx-2 grid grid-cols-3 gap-1 rounded-xl border border-gray-200 bg-gray-100/70 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
             <button
               type="button"
               onClick={() => setAppMode('gallery')}
-              className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'gallery' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              className={`h-10 rounded-lg px-2 text-xs transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'gallery' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
               图片工作台
             </button>
             <button
               type="button"
               onClick={() => setAppMode('agent')}
-              className={`h-10 rounded-lg px-4 text-sm transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'agent' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              className={`h-10 rounded-lg px-2 text-xs transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${appMode === 'agent' ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
               Agent创作台
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPromptLibrary(true)}
+              className={`h-10 rounded-lg px-2 text-xs transition-[transform,background-color,color,box-shadow] active:scale-[0.96] ${showPromptLibrary ? 'bg-white font-medium text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+            >
+              提示词库
             </button>
           </nav>
         </div>
@@ -191,6 +207,7 @@ export default function Header() {
         </div>
       </div>
       {showHelp && <HelpModal appMode={appMode} isFavoriteCollectionOverview={appMode === 'gallery' && filterFavorite && !activeFavoriteCollectionId} onClose={() => setShowHelp(false)} />}
+      {showPromptLibrary && <PromptLibraryModal onClose={() => setShowPromptLibrary(false)} />}
     </>
   )
 }

@@ -526,6 +526,28 @@ describe('agent input builder', () => {
     expect(JSON.stringify(input[input.length - 1])).toContain('Tool-call budget: 2/2 used.')
   })
 
+  it('keeps only new tool results when a previous response id carries the history', async () => {
+    const currentRound = round('round-1', 1, { status: 'running', finishedAt: null })
+    const functionOutput = { type: 'function_call_output' as const, call_id: 'image-call', output: '{"status":"done"}' }
+
+    const input = await buildAgentContinuationInput({
+      baseInput: [{ role: 'user', content: [{ type: 'input_text', text: '完整历史不应重复发送' }] }],
+      conversation: conversation([currentRound], [message(currentRound, '完整历史不应重复发送')]),
+      currentRound,
+      tasks: [],
+      currentRoundOutput: [{ type: 'function_call', name: 'generate_image', call_id: 'image-call', arguments: '{}' }],
+      functionCallOutputs: [functionOutput],
+      batchTaskIds: [],
+      toolCallsUsed: 1,
+      maxToolCalls: 3,
+      loadImage: noImage,
+      usePreviousResponseId: true,
+    })
+
+    expect(JSON.stringify(input)).not.toContain('完整历史不应重复发送')
+    expect(input).toContain(functionOutput)
+  })
+
   it('prioritizes current inputs and new tool images over historical images on continuation', async () => {
     const previous = round('round-1', 1, { outputTaskIds: ['history-task'], assistantMessageId: 'assistant-1' })
     const currentRound = round('round-2', 2, {

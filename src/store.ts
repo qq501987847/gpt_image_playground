@@ -2349,10 +2349,13 @@ export async function submitAgentMessage() {
         : [...current.messages, userMessage]
       : [...current.messages, userMessage]
 
+    const startsNewTaskAfterApprovedPlan = current.skillPlan?.status === 'approved'
     return {
       ...current,
       title: nextTitle,
-      ...(current.skillPlan && !parentPath.some((item) => item.id === current.skillPlan?.sourceRoundId)
+      ...(startsNewTaskAfterApprovedPlan
+        ? { skillId: null, skillMode: undefined, skillPlan: null }
+        : current.skillPlan && !parentPath.some((item) => item.id === current.skillPlan?.sourceRoundId)
         ? { skillPlan: null }
         : {}),
       activeRoundId: roundId,
@@ -2703,7 +2706,7 @@ async function executeAgentRound(
     )
     const claimedSkillItemIds = new Set(
       latestState.tasks
-        .filter((task) => task.agentConversationId === conversationId && task.agentRoundId === roundId && task.agentSkillPlanItemId && task.status === 'done' && task.outputImages.length > 0)
+        .filter((task) => task.agentConversationId === conversationId && task.agentSkillPlanItemId && task.status === 'done' && task.outputImages.length > 0)
         .map((task) => task.agentSkillPlanItemId!),
     )
     let proposedSkillPlan: AgentSkillPlan | null = null
@@ -2930,6 +2933,7 @@ async function executeAgentRound(
     let lastResponseId: string | undefined = round.responseId
     let toolCallsUsed = resume?.toolCallsUsed ?? 0
     let apiInputForTurn = apiInput
+    let previousResponseIdForTurn: string | undefined
     if (resume) {
       const resumeState = useStore.getState()
       apiInputForTurn = await buildAgentContinuationInput({
@@ -3300,6 +3304,9 @@ async function executeAgentRound(
     while (true) {
       if (controller.signal.aborted) throw createAgentAbortError()
       if (reachedToolLimit) break
+      const completedTaskCountAtTurnStart = useStore.getState().tasks.filter(
+        (task) => task.agentConversationId === conversationId && task.agentRoundId === roundId && task.status === 'done' && task.outputImages.length > 0,
+      ).length
       const textBeforeResponse = accumulatedText
       let currentResponseOutputItems: ResponsesOutputItem[] = []
       const result = await callAgentResponsesApi({
@@ -3308,6 +3315,7 @@ async function executeAgentRound(
         imageProfile,
         params: imageParams,
         input: apiInputForTurn,
+        previousResponseId: previousResponseIdForTurn,
         maskDataUrl,
         signal: controller.signal,
         allowImageTools: !resume?.continuationOnly,
@@ -3474,6 +3482,11 @@ async function executeAgentRound(
         }
       }
 
+      const completedTaskCountThisTurn = useStore.getState().tasks.filter(
+        (task) => task.agentConversationId === conversationId && task.agentRoundId === roundId && task.status === 'done' && task.outputImages.length > 0,
+      ).length
+      const generatedImageThisTurn = completedTaskCountThisTurn > completedTaskCountAtTurnStart
+
       // Check for function calls that require continuation
       const imageFunctionCalls = (resume?.continuationOnly ? [] : currentResponseOutputItems).filter(
         (item) => item.type === 'function_call' && item.name === 'generate_image',
@@ -3592,6 +3605,16 @@ async function executeAgentRound(
         break
       }
 
+      if (continueFunctionCalls.length > 0 && !generatedImageThisTurn) {
+        accumulatedOutputItems = accumulatedOutputItemsWithFunctionOutputs
+        updateAgentConversation(conversationId, (current) => ({
+          ...current,
+          updatedAt: Date.now(),
+          rounds: current.rounds.map((item) => item.id === roundId ? { ...item, responseId: lastResponseId, responseOutput: accumulatedOutputItems } : item),
+        }))
+        break
+      }
+
       updateAgentConversation(conversationId, (current) => ({
         ...current,
         updatedAt: Date.now(),
@@ -3622,7 +3645,9 @@ async function executeAgentRound(
         maxToolCalls,
         loadImage: ensureAgentObservationImageCached,
         continuationOnly: resume?.continuationOnly,
+        usePreviousResponseId: Boolean(lastResponseId),
       })
+      previousResponseIdForTurn = lastResponseId
       accumulatedOutputItems = accumulatedOutputItemsWithFunctionOutputs
       pendingToolTextSeparator = true
     }

@@ -3933,6 +3933,89 @@ describe('agent built-in image tool failure', () => {
     expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].promptCacheKey).toBe('awai-agent:conversation-a')
   })
 
+  it('clears an approved package before a follow-up task such as adding H6', async () => {
+    const plan: AgentSkillPlan = {
+      skillId: 'ecom-details-image',
+      title: '宠物粮主图',
+      styleLock: '统一奶白和芥末黄包装视觉。',
+      groups: [{
+        kind: 'hero',
+        title: '商品主图',
+        images: Array.from({ length: 5 }, (_, index) => ({
+          id: `H${index + 1}`,
+          title: `主图 ${index + 1}`,
+          prompt: `生成主图 ${index + 1}`,
+          aspectRatio: '1:1',
+          resolution: '2K',
+        })),
+      }],
+      sourceRoundId: 'round-plan',
+      status: 'approved',
+    }
+    useStore.setState({
+      prompt: '补生成 H6 狗粮颗粒微距细节图',
+      agentConversations: [agentConversation({
+        id: 'conversation-a',
+        skillId: 'ecom-details-image',
+        skillMode: 'hero',
+        skillPlan: plan,
+        activeRoundId: 'round-plan',
+        rounds: [{
+          id: 'round-plan',
+          index: 1,
+          parentRoundId: null,
+          userMessageId: 'user-plan',
+          prompt: '生成一套宠物粮主图',
+          inputImageIds: [],
+          outputTaskIds: [],
+          status: 'done',
+          error: null,
+          createdAt: 1,
+          finishedAt: 2,
+        }],
+        messages: [{ id: 'user-plan', role: 'user', content: '生成一套宠物粮主图', roundId: 'round-plan', createdAt: 1 }],
+      })],
+    })
+    vi.mocked(callAgentResponsesApi).mockResolvedValueOnce({
+      text: '已收到 H6 补图请求。',
+      images: [],
+      outputItems: [{ type: 'message', content: [{ type: 'output_text', text: '已收到 H6 补图请求。' }] }],
+      responseId: 'response-follow-up',
+    })
+
+    await submitAgentMessage()
+    await vi.waitFor(() => {
+      const rounds = useStore.getState().agentConversations[0].rounds
+      expect(rounds[rounds.length - 1]?.status).toBe('done')
+    })
+
+    expect(useStore.getState().agentConversations[0]).toMatchObject({ skillId: null, skillPlan: null })
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].agentSkill).toBeNull()
+  })
+
+  it('stops a continue_generation call when the round made no image progress', async () => {
+    vi.mocked(callAgentResponsesApi)
+      .mockResolvedValueOnce({
+        text: '准备继续。',
+        images: [],
+        outputItems: [{ type: 'function_call', name: 'continue_generation', call_id: 'continue-without-image', arguments: JSON.stringify({ reason: '继续生成' }) }],
+        responseId: 'response-no-progress',
+      })
+      .mockResolvedValueOnce({
+        text: '不应再次请求。',
+        images: [],
+        outputItems: [{ type: 'message', content: [{ type: 'output_text', text: '不应再次请求。' }] }],
+        responseId: 'response-unexpected',
+      })
+    useStore.setState({ prompt: '继续生成下一张图' })
+
+    await submitAgentMessage()
+    await vi.waitFor(() => expect(useStore.getState().agentConversations[0].rounds[0]?.status).toBe('done'))
+
+    expect(callAgentResponsesApi).toHaveBeenCalledTimes(1)
+    expect(useStore.getState().agentConversations[0].messages[1]?.content).toContain('准备继续。')
+  })
+
   it('normalizes Agent image params with the Hybrid image profile', async () => {
     const imageProfile = createDefaultOpenAIProfile({
       id: 'codex-image-profile',
@@ -4100,6 +4183,7 @@ describe('agent built-in image tool failure', () => {
     liveRequest.resolve({ images: ['data:image/png;base64,live-batch'], actualParams: {}, actualParamsList: [{}], revisedPrompts: ['live prompt'] })
 
     await vi.waitFor(() => expect(callAgentResponsesApi).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[1][0].previousResponseId).toBe('response-batch-function')
     const continuationInput = JSON.stringify(vi.mocked(callAgentResponsesApi).mock.calls[1][0].input)
     expect(continuationInput).not.toContain('deleted-item')
     expect(continuationInput).not.toContain('deleted prompt')

@@ -39,6 +39,7 @@ interface BuildAgentContinuationInputOptions {
   maxToolCalls: number
   loadImage: LoadImage
   continuationOnly?: boolean
+  usePreviousResponseId?: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -313,11 +314,13 @@ export async function buildAgentContinuationInput(options: BuildAgentContinuatio
     selectedBytes = nextBytes
   }
 
-  const input = [
-    ...filterInputImages(options.baseInput, allowedDataUrls),
-    ...sanitizeResponseOutputForInput(currentRoundOutput, { allowPendingFunctionCalls: true }),
-    ...(options.functionCallOutputs ?? []),
-  ]
+  const input = options.usePreviousResponseId
+    ? [...(options.functionCallOutputs ?? [])]
+    : [
+        ...filterInputImages(options.baseInput, allowedDataUrls),
+        ...sanitizeResponseOutputForInput(currentRoundOutput, { allowPendingFunctionCalls: true }),
+        ...(options.functionCallOutputs ?? []),
+      ]
   const batchImagesItem = createBatchImagesInputItem(options.currentRound, options.tasks, options.batchTaskIds, selectedBatchImages)
   if (batchImagesItem) input.push(batchImagesItem)
 
