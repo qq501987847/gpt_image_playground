@@ -27,6 +27,34 @@ describe('model capabilities', () => {
     expect(getOpenAIRequestParams(DEFAULT_PARAMS, { provider: 'openai', model: 'gpt-image-2', apiMode: 'images' })).toEqual({ size: '2048x2048', output_format: 'png' })
   })
 
+  it.each([
+    'gpt-image-2.5-flare',
+    'gpt-image-2.5-flare-2026-09-08',
+    'gpt-image-2.5-sunburst',
+    'gpt-image-2.5-sunburst-2026-09-08',
+  ])('reuses gpt-image-2 parameters and adds xhigh/max quality for %s', (model) => {
+    const capability = getModelCapability('openai', model)
+    expect(capability).toMatchObject({
+      verified: true,
+      qualities: ['auto', 'low', 'medium', 'high', 'xhigh', 'max'],
+      imageSizes: ['1K', '2K', '4K'],
+    })
+    expect(capability.fields).toContain('output_compression')
+    expect(capability.aspectRatios).toContain('16:9')
+    for (const quality of ['xhigh', 'max'] as const) {
+      expect(getOpenAIRequestParams({
+        ...DEFAULT_PARAMS,
+        quality,
+        geminiAspectRatio: '16:9',
+        geminiImageSize: '2K',
+      }, { provider: 'openai', model, apiMode: 'images' })).toEqual({
+        size: '2048x1152',
+        quality,
+        output_format: 'png',
+      })
+    }
+  })
+
   it('uses the configured resolution tier for gpt-image-2', () => {
     const params = { ...DEFAULT_PARAMS, geminiAspectRatio: '9:16', geminiImageSize: '1K' as const }
     expect(getOpenAIRequestParams(params, { provider: 'openai', model: 'gpt-image-2', apiMode: 'images' })).toEqual({

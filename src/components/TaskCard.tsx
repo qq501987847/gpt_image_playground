@@ -5,7 +5,7 @@ import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imag
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
-import { getGptImage2RequestSize } from '../lib/modelCapabilities'
+import { getGptImage2RequestSize, isGptImage2FamilyModel } from '../lib/modelCapabilities'
 import { getSub2ApiImageBillingTier } from '../lib/sub2api'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { isDesktopRuntime } from '../lib/runtime'
@@ -312,7 +312,7 @@ export default function TaskCard({
   const qualityDisplay = getParamDisplay(task, 'quality')
   const showQuality = task.params.quality !== 'auto' || qualityDisplay.isMismatch
 
-  const gptImage2RequestSize = task.apiProvider === 'openai' && task.apiModel === 'gpt-image-2'
+  const gptImage2RequestSize = task.apiProvider === 'openai' && isGptImage2FamilyModel(task.apiModel ?? '')
     ? getGptImage2RequestSize(task.params)
     : null
   const sizeDisplay = getParamDisplay(task, 'size', gptImage2RequestSize && gptImage2RequestSize !== 'auto'

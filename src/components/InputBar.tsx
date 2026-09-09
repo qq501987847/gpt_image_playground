@@ -10,7 +10,7 @@ import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, 
 import { normalizeCodexCliImageSize, normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
-import { getGptImage2RequestSize, getModelCapability, modelSupportsField } from '../lib/modelCapabilities'
+import { getGptImage2RequestSize, getModelCapability, isGptImage2FamilyModel, modelSupportsField } from '../lib/modelCapabilities'
 import { getSub2ApiImageBillingTier } from '../lib/sub2api'
 import { isDesktopRuntime } from '../lib/runtime'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
@@ -560,18 +560,12 @@ export default function InputBar() {
     ? DEFAULT_FAL_IMAGE_SIZE
     : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
 
-  const qualityOptions = isFalProvider
-    ? [
-        { label: 'low', value: 'low' },
-        { label: 'medium', value: 'medium' },
-        { label: 'high', value: 'high' },
-      ]
-    : [
-        { label: 'auto', value: 'auto' },
-        { label: 'low', value: 'low' },
-        { label: 'medium', value: 'medium' },
-        { label: 'high', value: 'high' },
-      ]
+  const qualityOptions = (isFalProvider
+    ? ['low', 'medium', 'high'] as const
+    : activeProvider === 'openai'
+      ? getModelCapability(activeProvider, activeProfile.model, activeProfile.apiMode).qualities
+      : ['auto', 'low', 'medium', 'high'] as const
+  ).map((value) => ({ label: value, value }))
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
@@ -1671,10 +1665,10 @@ export default function InputBar() {
     />
   )
   const modelCapability = getModelCapability(activeProfile.provider, activeProfile.model, activeProfile.apiMode)
-  const gptImage2RequestSize = activeProfile.provider === 'openai' && activeProfile.model === 'gpt-image-2'
+  const gptImage2RequestSize = activeProfile.provider === 'openai' && isGptImage2FamilyModel(activeProfile.model)
     ? getGptImage2RequestSize(params)
     : null
-  const gptImage2AspectRatio = activeProfile.provider === 'openai' && activeProfile.model === 'gpt-image-2' && (!params.geminiAspectRatio || params.geminiAspectRatio === 'auto')
+  const gptImage2AspectRatio = activeProfile.provider === 'openai' && isGptImage2FamilyModel(activeProfile.model) && (!params.geminiAspectRatio || params.geminiAspectRatio === 'auto')
     ? '1:1'
     : params.geminiAspectRatio
   const gptImage2BillingTier = activeProfile.keyId && gptImage2RequestSize && gptImage2RequestSize !== 'auto'
@@ -1686,7 +1680,7 @@ export default function InputBar() {
     modelSupportsField(modelCapability, 'geminiImageSize') && (params.geminiImageSize === 'auto'
       ? '自动'
       : `${params.geminiImageSize}${gptImage2RequestSize && gptImage2RequestSize !== 'auto' ? ` ${gptImage2RequestSize.replace('x', '×')}` : ''}${gptImage2BillingTier && gptImage2BillingTier !== params.geminiImageSize ? ` · 按${gptImage2BillingTier}计费` : ''}`),
-    modelSupportsField(modelCapability, 'quality') && (params.quality === 'auto' ? '自动' : params.quality === 'low' ? '低' : params.quality === 'medium' ? '中' : '高'),
+    modelSupportsField(modelCapability, 'quality') && (params.quality === 'auto' ? '自动' : params.quality === 'low' ? '低' : params.quality === 'medium' ? '中' : params.quality === 'high' ? '高' : params.quality === 'xhigh' ? 'xHigh' : 'Max'),
     (isGeminiProvider || modelSupportsField(modelCapability, 'n')) && `${params.n}张`,
   ].filter((value): value is string => Boolean(value))
   const paramsSummary = paramsSummaryValues.join(' · ')

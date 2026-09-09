@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">AWAI</title>
+  <desc id="description">AWAI courier mascot</desc>
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="#FFFFFF" stroke="#000000" stroke-opacity=".1" stroke-width="2"/>
+  <g transform="translate(-20 -18) scale(1.16)">
+    <ellipse cx="128" cy="226" rx="66" ry="10" fill="#171918" opacity=".12"/>
+    <path d="M83 175 62 196M173 175l20 21" fill="none" stroke="#171918" stroke-linecap="round" stroke-width="13"/>
+    <path d="M91 209 82 225M165 209l9 16" fill="none" stroke="#171918" stroke-linecap="round" stroke-width="13"/>
+    <path d="M66 225h28M162 225h29" fill="none" stroke="#171918" stroke-linecap="round" stroke-width="13"/>
+    <rect x="76" y="128" width="104" height="84" rx="30" fill="#6EA9FD" stroke="#171918" stroke-width="8"/>
+    <rect x="96" y="146" width="64" height="43" rx="14" fill="#F7F8F6"/>
+    <path d="m106 177 12-24 12 24M111 167h14" fill="none" stroke="#171918" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <path d="m132 155 7 22 8-13 7 13 6-22" fill="none" stroke="#EF5A49" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <rect x="50" y="30" width="156" height="114" rx="42" fill="#171918"/>
+    <rect x="65" y="45" width="126" height="84" rx="30" fill="#232A26" stroke="#F7F8F6" stroke-opacity=".1" stroke-width="2"/>
+    <circle cx="184" cy="48" r="10" fill="#2BC48A"/>
+    <rect x="88" y="72" width="26" height="14" rx="7" fill="#F7F8F6"/>
+    <rect x="142" y="72" width="26" height="14" rx="7" fill="#F7F8F6"/>
+    <path d="M101 106c17 13 37 13 54 0" fill="none" stroke="#EF5A49" stroke-linecap="round" stroke-width="8"/>
+    <path d="M62 196c-10-2-17-8-18-17" fill="none" stroke="#171918" stroke-linecap="round" stroke-width="12"/>
+    <rect x="27" y="154" width="52" height="42" rx="10" fill="#EF5A49" stroke="#171918" stroke-width="7"/>
+    <path d="m35 168 22 10 17-16" fill="none" stroke="#F7F8F6" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <circle cx="68" cy="158" r="6" fill="#2BC48A"/>
+  </g>
+</svg>

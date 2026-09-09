@@ -18,11 +18,21 @@ export interface ModelCapability {
 const OPENAI_BASE_FIELDS: ModelField[] = ['size', 'n']
 const GEMINI_BASE_FIELDS: ModelField[] = ['geminiAspectRatio', 'geminiImageSize']
 const GPT_IMAGE_2_SIZES = ['auto', '1024x1024', '1536x1024', '1024x1536']
+const GPT_IMAGE_25_MODEL_ID = /^gpt-image-2\.5-(?:flare|sunburst)(?:-\d{4}-\d{2}-\d{2})?$/i
 const IMAGE_MODEL_ID = /(?:^|[-_.])(?:gpt-image|image|images|imagen|dall-e|flux|midjourney)(?:[-_.]|$)/i
 const OPENAI_TEXT_MODEL_ID = /^(?:gpt-(?:[345](?:[.-]|$)|4o(?:[-.]|$)|oss(?:[-.]|$))|o[134](?:[-.]|$)|chatgpt|codex)/i
 const GEMINI_TEXT_MODEL_ID = /^gemini-/i
 export const GPT_IMAGE_2_ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9', '9:21', '1:3', '3:1', '2:1', '1:2'] as const
 export const GPT_IMAGE_2_RESOLUTIONS = ['1K', '2K', '4K'] as const
+
+export function isGptImage2FamilyModel(model: string) {
+  const normalized = model.trim()
+  return normalized.toLowerCase() === 'gpt-image-2' || GPT_IMAGE_25_MODEL_ID.test(normalized)
+}
+
+function isGptImage25Model(model: string) {
+  return GPT_IMAGE_25_MODEL_ID.test(model.trim())
+}
 
 function isExplicitImageModel(model: string) {
   return IMAGE_MODEL_ID.test(model.trim())
@@ -115,13 +125,15 @@ export function getModelCapability(provider: ApiProvider, model: string, apiMode
     }
   }
 
-  if (model === 'gpt-image-2') {
+  if (isGptImage2FamilyModel(model)) {
     return {
       protocol,
       verified: true,
       fields: ['size', 'quality', 'n', 'output_format', 'output_compression', 'background', 'moderation', 'transparent_output', 'geminiAspectRatio', 'geminiImageSize'],
       sizes: GPT_IMAGE_2_SIZES,
-      qualities: ['auto', 'low', 'medium', 'high'],
+      qualities: isGptImage25Model(model)
+        ? ['auto', 'low', 'medium', 'high', 'xhigh', 'max']
+        : ['auto', 'low', 'medium', 'high'],
       imageSizes: GPT_IMAGE_2_RESOLUTIONS,
       aspectRatios: [...GPT_IMAGE_2_ASPECT_RATIOS],
     }
@@ -159,7 +171,7 @@ export function normalizeParamsForModel(params: TaskParams, profile: Pick<ApiPro
   if (capability.qualities.length && !capability.qualities.includes(next.quality)) next.quality = DEFAULT_PARAMS.quality
   if (capability.verified && capability.imageSizes?.length && !capability.imageSizes.includes(next.geminiImageSize ?? 'auto')) next.geminiImageSize = DEFAULT_PARAMS.geminiImageSize
   if (capability.verified && capability.aspectRatios?.length && !capability.aspectRatios.includes(next.geminiAspectRatio ?? 'auto')) {
-    next.geminiAspectRatio = profile.model === 'gpt-image-2' && next.geminiAspectRatio !== 'auto' ? '1:1' : 'auto'
+    next.geminiAspectRatio = isGptImage2FamilyModel(profile.model) && next.geminiAspectRatio !== 'auto' ? '1:1' : 'auto'
   }
   if (next.output_format === 'png') next.output_compression = null
 
@@ -178,7 +190,7 @@ export function getOpenAIRequestParams(params: TaskParams, profile: Pick<ApiProf
     }
   }
   const capability = getModelCapability(profile.provider, profile.model, profile.apiMode)
-  const size = profile.model === 'gpt-image-2' ? getGptImage2RequestSize(params) : params.size
+  const size = isGptImage2FamilyModel(profile.model) ? getGptImage2RequestSize(params) : params.size
   return {
     ...(modelSupportsField(capability, 'size') && size !== 'auto' ? { size } : {}),
     ...(modelSupportsField(capability, 'quality') && params.quality !== 'auto' ? { quality: params.quality } : {}),

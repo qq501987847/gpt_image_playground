@@ -58,6 +58,18 @@ function fallback() {
 }
 
 describe('persisted state codec', () => {
+  it.each(['xhigh', 'max'] as const)('preserves the gpt-image-2.5 %s quality setting', (quality) => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      profiles: DEFAULT_SETTINGS.profiles.map((profile) => profile.id === DEFAULT_SETTINGS.activeProfileId
+        ? { ...profile, model: 'gpt-image-2.5-flare' }
+        : profile),
+    }
+    const result = normalizePersistedState({ settings, params: { ...DEFAULT_PARAMS, quality } }, fallback(), 100)!
+
+    expect(result.state.params.quality).toBe(quality)
+  })
+
   it('rejects non-record unknown data and falls back field-by-field for an invalid record', () => {
     class ExternalState {}
 
