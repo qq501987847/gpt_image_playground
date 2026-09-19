@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { initStore } from './store'
 import { useStore } from './store'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
@@ -28,6 +28,7 @@ const releaseMode = import.meta.env.VITE_AWAI_RELEASE_MODE === 'true'
 
 export default function App() {
   const sub2api = useSub2ApiSession()
+  const [hydratedSession, setHydratedSession] = useState<typeof sub2api | null>(null)
   const setSettings = useStore((s) => s.setSettings)
   const settings = useStore((s) => s.settings)
   const appMode = useStore((s) => s.appMode)
@@ -48,7 +49,8 @@ export default function App() {
         const state = useStore.getState()
         const profiles = await hydrateSub2ApiProfiles(state.settings.profiles)
         if (disposed) return
-        state.setSettings({ ...state.settings, profiles })
+        state.setSettings({ profiles })
+        setHydratedSession(session)
         if (!openSetupIfNeeded) return
 
         if (session.context && shouldOpenAgentSetup(useStore.getState().settings, session.keys)) {
@@ -104,7 +106,8 @@ export default function App() {
   }, [setSettings])
 
   useEffect(() => {
-    if (isDesktopRuntime || sub2api.status !== 'ready' || appMode !== 'agent') return
+    // 身份已就绪不代表持久化配置中的 Key 已恢复，恢复完成后才能校验。
+    if (isDesktopRuntime || sub2api.status !== 'ready' || hydratedSession !== sub2api || appMode !== 'agent') return
     const error = getAgentProfileValidationError(settings, {
       requireHybrid: true,
       keys: sub2api.keys,
@@ -114,7 +117,7 @@ export default function App() {
     const state = useStore.getState()
     state.setAppMode('gallery')
     state.setAgentSetupOpen(true)
-  }, [appMode, settings, sub2api.keys, sub2api.status])
+  }, [appMode, settings, sub2api, hydratedSession])
 
   useEffect(() => {
     const preventPageImageDrag = (e: DragEvent) => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { discoverModelsForKey, useSub2ApiSession } from '../lib/sub2apiSession'
 import { getSub2ApiKeyLabel, isSub2ApiKeyUsable } from '../lib/sub2api'
@@ -37,9 +37,16 @@ export default function AgentSetupModal() {
   const [imageError, setImageError] = useState('')
 
   const usableKeys = useMemo(() => session.keys.filter(isSub2ApiKeyUsable), [session.keys])
+  const initializedRef = useRef(false)
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      initializedRef.current = false
+      return
+    }
+    if (initializedRef.current || session.status !== 'ready') return
+    // 聚焦刷新会话会更新 settings 和 keys，不能覆盖用户正在编辑的草稿。
+    initializedRef.current = true
     const textProfile = getAgentTextApiProfile(settings)
     const imageProfile = getAgentImageApiProfile(settings)
     const fallbackKeyId = usableKeys[0]?.id ?? ''
@@ -54,7 +61,7 @@ export default function AgentSetupModal() {
     setImageModels([])
     setTextError('')
     setImageError('')
-  }, [open, settings, usableKeys])
+  }, [open, settings, usableKeys, session.status])
 
   useEffect(() => {
     if (!open || (isDesktopRuntime && setupMode === 'image') || !textKeyId) return
@@ -107,6 +114,7 @@ export default function AgentSetupModal() {
   if (!open) return null
 
   const confirm = async () => {
+    if (!canConfirm || busy) return
     const separator = imageModelValue.indexOf(':')
     const imageProvider = imageModelValue.slice(0, separator) as ImageModelOption['provider']
     const imageModel = imageModelValue.slice(separator + 1)
@@ -155,8 +163,8 @@ export default function AgentSetupModal() {
   }
 
   const busy = textLoading || imageLoading || saving
-  const canConfirm = Boolean(imageKeyId && imageModelValue && !imageLoading) && (
-    isDesktopRuntime && setupMode === 'image' || Boolean(textKeyId && textModel && !textLoading)
+  const canConfirm = session.status === 'ready' && usableKeys.some((key) => key.id === imageKeyId) && Boolean(imageModelValue && !imageLoading) && (
+    isDesktopRuntime && setupMode === 'image' || usableKeys.some((key) => key.id === textKeyId) && Boolean(textModel && !textLoading)
   )
 
   return (
@@ -178,6 +186,7 @@ export default function AgentSetupModal() {
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-xs text-gray-500 dark:text-gray-400">分组
                 <select value={textKeyId} onChange={(event) => setTextKeyId(event.target.value)} className="mt-1.5 h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100">
+                  {!usableKeys.some((key) => key.id === textKeyId) && <option value={textKeyId} disabled>分组已失效，请重新选择</option>}
                   {usableKeys.map((key) => <option key={key.id} value={key.id}>{getSub2ApiKeyLabel(key)}</option>)}
                 </select>
               </label>
@@ -195,6 +204,7 @@ export default function AgentSetupModal() {
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-xs text-gray-500 dark:text-gray-400">分组
                 <select value={imageKeyId} onChange={(event) => setImageKeyId(event.target.value)} className="mt-1.5 h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100">
+                  {!usableKeys.some((key) => key.id === imageKeyId) && <option value={imageKeyId} disabled>分组已失效，请重新选择</option>}
                   {usableKeys.map((key) => <option key={key.id} value={key.id}>{getSub2ApiKeyLabel(key)}</option>)}
                 </select>
               </label>
