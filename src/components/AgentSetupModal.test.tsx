@@ -38,7 +38,7 @@ let root: Root
 let container: HTMLDivElement
 beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  store.setState({ agentSetupOpen: true, settings: DEFAULT_SETTINGS })
+  store.setState({ agentSetupOpen: true, settings: normalizeSettings({ ...DEFAULT_SETTINGS, agentApiConfigMode: 'hybrid' }) })
   session.keys = [{ id: 'key', name: '测试 Key', value: 'test-only', group: '测试', status: 'active' }]
   container = document.createElement('div')
   document.body.append(container)
@@ -87,4 +87,25 @@ it('刷新后所选 Key 已停用时不能保存失效配置', async () => {
   })
   const save = [...container.querySelectorAll('button')].find((button) => button.textContent === '保存')!
   expect(save.disabled).toBe(true)
+})
+
+it('在线版没有文本模型也能选择只生图并保存', async () => {
+  const { discoverModelsForKey } = await import('../lib/sub2apiSession')
+  await act(async () => store.getState().setAgentSetupOpen(false))
+  vi.mocked(discoverModelsForKey).mockResolvedValueOnce({ openai: ['gpt-image-2.5'], gemini: [], errors: {} })
+  await act(async () => {
+    store.getState().setSettings({ agentApiConfigMode: 'off' })
+    store.getState().setAgentSetupOpen(true)
+  })
+  const imageMode = [...container.querySelectorAll('button')].find((button) => button.textContent === '只生图')
+  expect(imageMode).toBeDefined()
+  await act(async () => imageMode!.click())
+  expect(container.textContent).not.toContain('Responses 模型')
+  const save = [...container.querySelectorAll('button')].find((button) => button.textContent === '开始生图')!
+  expect(save.disabled).toBe(false)
+  await act(async () => save.click())
+  expect(store.getState().agentSetupOpen).toBe(false)
+  expect(store.getState().settings.agentApiConfigMode).toBe('off')
+  expect(store.getState().settings.agentTextProfileId).toBeNull()
+  expect(store.getState().setAppMode).toHaveBeenCalledWith('gallery')
 })

@@ -53,8 +53,9 @@ export default function App() {
         setHydratedSession(session)
         if (!openSetupIfNeeded) return
 
-        if (session.context && shouldOpenAgentSetup(useStore.getState().settings, session.keys)) {
-          useStore.getState().setAppMode('agent')
+        const current = useStore.getState()
+        if (session.context && shouldOpenAgentSetup(current.settings, session.keys, current.appMode)) {
+          current.setAgentSetupOpen(true)
         }
       } finally {
         refreshing = false

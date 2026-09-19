@@ -35,3 +35,24 @@ describe('shouldOpenAgentSetup', () => {
     expect(shouldOpenAgentSetup(DEFAULT_SETTINGS, [{ ...key('expired-key'), status: 'disabled' }])).toBe(false)
   })
 })
+
+it('只生图配置不要求文本 Key，重新进入不弹配置', () => {
+  const image = createDefaultOpenAIProfile({ id: 'image', keyId: 'image-key', apiKey: 'test-only' })
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [image], activeProfileId: image.id, agentImageProfileId: image.id, agentApiConfigMode: 'off' })
+  expect(shouldOpenAgentSetup(settings, [key('image-key')])).toBe(false)
+})
+
+it('只有生图配置时，进入 Agent 才需要补充文本配置', () => {
+  const image = createDefaultOpenAIProfile({ id: 'image', keyId: 'image-key', apiKey: 'test-only' })
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [image], activeProfileId: image.id, agentImageProfileId: image.id, agentApiConfigMode: 'off' })
+  expect(shouldOpenAgentSetup(settings, [key('image-key')], 'agent')).toBe(true)
+  expect(shouldOpenAgentSetup(settings, [key('image-key')], 'gallery')).toBe(false)
+  expect(shouldOpenAgentSetup(settings, [{ ...key('image-key'), status: 'disabled' }, key('other')], 'gallery')).toBe(true)
+})
+
+it('图片工作台不因未配置文本模型而阻止有效生图配置', () => {
+  const image = createDefaultOpenAIProfile({ id: 'image', keyId: 'image-key', apiKey: 'test-only' })
+  const settings = normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [image], activeProfileId: image.id, agentImageProfileId: image.id, agentApiConfigMode: 'hybrid' })
+  expect(shouldOpenAgentSetup(settings, [key('image-key')], 'gallery')).toBe(false)
+  expect(shouldOpenAgentSetup(settings, [key('image-key')], 'agent')).toBe(true)
+})

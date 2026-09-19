@@ -1112,7 +1112,7 @@ export default function SettingsModal() {
                   <rect width="16" height="12" x="4" y="8" rx="2" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 14h2M20 14h2M15 13v2M9 13v2" />
                 </svg>
-                Agent 配置
+                {isDesktopRuntime ? 'Agent 配置' : '模型配置'}
               </button>
               <button
                 onClick={() => setActiveTab('data')}
